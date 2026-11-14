@@ -46,6 +46,10 @@ declare -A NET_LABEL=(
   [digibyte-mainnet]="DigiByte mainnet"
   [digibyte-testnet]="DigiByte testnet (v9, testnet26)"
 )
+declare -A NET_SHORT=(                      # short name for the status table
+  [digibyte-mainnet]="DigiByte mainnet"
+  [digibyte-testnet]="DigiByte testnet"
+)
 declare -A NET_ARGS=(                       # extra seeder arguments
   [digibyte-mainnet]=""
   [digibyte-testnet]="--testnet"
@@ -607,18 +611,31 @@ do_status() {
   load_settings || fail "DigiNode Seeder isn't set up on this server."
   detect_addresses
   title "DigiNode Seeder status"
-  local id state commit n line
-  printf '  %-36s %s\n' "dnsdist" "$(systemctl is-active dnsdist)"
+  local id state n mark chain w=10
+  for id in "${ENABLED[@]}"; do (( ${#SEED_HOST[$id]} > w )) && w=${#SEED_HOST[$id]}; done
+  state=$(systemctl is-active dnsdist || true)
+  mark="${GRN}✓${R}"; [[ $state == active ]] || mark="${RED}✗${R}"
+  printf '  %b %-18s %s\n' "$mark" "dnsdist" "$state (answers DNS on port 53)"
   for id in "${ENABLED[@]}"; do
     state=$(systemctl is-active "diginode-seeder@$id" || true)
-    commit=$(cat "$INSTALL_DIR/bin/${id%%-*}-seeder.commit" 2>/dev/null || echo "?")
     n=$(dig +short +time=2 +tries=1 @"${LOCAL_V4:-$LOCAL_V6}" "${SEED_HOST[$id]}" A 2>/dev/null | grep -c '^[0-9]' || true)
-    printf '  %-36s %s, build %s, %s nodes\n' "${NET_LABEL[$id]} (${SEED_HOST[$id]})" "$state" "$commit" "$n"
-    line=$(journalctl -u "diginode-seeder@$id" -n 50 --no-pager -o cat 2>/dev/null | grep 'available' | tail -1 || true)
-    [[ -n $line ]] && printf '  %sLast report (every 10 minutes): %s%s\n' "$DIM" "$line" "$R"
+    mark="${GRN}✓${R}"; [[ $state == active && $n -gt 0 ]] || mark="${RED}✗${R}"
+    printf '  %b %-18s %-8s %-*s  %s nodes\n' "$mark" "${NET_SHORT[$id]}" "$state" "$w" "${SEED_HOST[$id]}" "$n"
   done
-  title "From the internet"
-  test_public || warn "Not reachable through public DNS yet (or the DNS records are missing)."
+  for chain in "${CHAINS[@]}"; do
+    [[ -f $INSTALL_DIR/bin/$chain-seeder.commit ]] || continue
+    local repo="${CHAIN_REPO[$chain]#https://github.com/}"
+    printf '    %s%s seeder build %s (%s)%s\n' "$DIM" "${CHAIN_NAME[$chain]}" \
+      "$(cat "$INSTALL_DIR/bin/$chain-seeder.commit")" "${repo%.git}" "$R"
+  done
+  title "From the internet (through public DNS)"
+  for id in "${ENABLED[@]}"; do
+    n=$(dig +short +time=3 +tries=1 @1.1.1.1 "${SEED_HOST[$id]}" A 2>/dev/null | grep -c '^[0-9]' || true)
+    if (( n > 0 )); then printf '  %b %-*s  %s nodes\n' "${GRN}✓${R}" "$w" "${SEED_HOST[$id]}" "$n"
+    else printf '  %b %-*s  not reachable yet: check its DNS records\n' "${YLW}!${R}" "$w" "${SEED_HOST[$id]}"; fi
+  done
+  say ""
+  say "Logs: journalctl -u diginode-seeder@<name>   (e.g. diginode-seeder@${ENABLED[0]})"
 }
 
 do_uninstall() {
