@@ -129,8 +129,24 @@ check_system() {
     *) fail "$PRETTY_NAME isn't supported. Use Debian 12/13 or Ubuntu 22.04/24.04." ;;
   esac
   command -v systemctl >/dev/null || fail "systemd is needed."
-  local mem; mem=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)
-  (( mem >= 400 )) || warn "Only ${mem} MB of memory. Each seeder uses about 50-150 MB."
+  MEM_MB=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)
+  (( MEM_MB >= 400 )) || warn "Only ${MEM_MB} MB of memory. Each seeder uses about 50-150 MB."
+}
+
+# Small servers (under 1 GB) get a 1 GB swap file, so building the seeder
+# can't run out of memory. Nothing is changed if any swap already exists.
+ensure_swap() {
+  (( MEM_MB < 1000 )) || return 0
+  [[ -z $(swapon --noheadings 2>/dev/null) ]] || return 0
+  local free_mb; free_mb=$(df -Pm / | awk 'NR==2{print $4}')
+  if (( free_mb < 3000 )); then warn "Low memory and little disk space: no swap file added."; return 0; fi
+  title "Adding a 1 GB swap file (this server has ${MEM_MB} MB of memory)"
+  fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+  chmod 600 /swapfile
+  mkswap -q /swapfile >/dev/null
+  swapon /swapfile
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  ok "Swap file /swapfile added"
 }
 
 # The address other computers reach this server on, and the local address
@@ -313,7 +329,8 @@ build_seeders() {
     fi
     commit=$(git -C "$src" rev-parse --short HEAD)
     make -C "$src" -s clean >/dev/null 2>&1 || true
-    make -C "$src" -s -j"$(nproc)" >/dev/null 2>&1 || { make -C "$src" 2>&1 | tail -20; fail "The build failed."; }
+    local jobs; jobs=$(nproc); (( MEM_MB < 1500 )) && jobs=1
+    make -C "$src" -s -j"$jobs" >/dev/null 2>&1 || { make -C "$src" 2>&1 | tail -20; fail "The build failed."; }
     install -m 755 "$src/dnsseed" "$INSTALL_DIR/bin/$chain-seeder.new"
     mv -f "$INSTALL_DIR/bin/$chain-seeder.new" "$INSTALL_DIR/bin/$chain-seeder"
     echo "$commit" > "$INSTALL_DIR/bin/$chain-seeder.commit"
@@ -547,6 +564,7 @@ do_setup() {
   show_summary
   confirm "Go ahead?" y || exit 0
   remember_fingerprints
+  ensure_swap
   install_packages
   build_seeders
   install_service
