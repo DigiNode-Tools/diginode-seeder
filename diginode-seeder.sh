@@ -411,7 +411,9 @@ EOF
 
 write_dnsdist() {
   title "Setting up dnsdist (answers DNS on port 53)"
-  if [[ -f $DNSDIST_CONF ]] && ! grep -q "^$DNSDIST_MARK" "$DNSDIST_CONF"; then
+  # Keep a copy of someone's own dnsdist config (not Debian's sample, which is all comments).
+  if [[ -f $DNSDIST_CONF ]] && ! grep -q "^$DNSDIST_MARK" "$DNSDIST_CONF" \
+     && grep -qvE '^[[:space:]]*(--.*)?$|^setSecurityPollSuffix\(""\)$' "$DNSDIST_CONF"; then
     local bak; bak="$DNSDIST_CONF.before-diginode-seeder.$(date +%Y%m%d-%H%M%S)"
     cp -p "$DNSDIST_CONF" "$bak"
     info "Saved the old dnsdist config as $bak"
@@ -475,14 +477,21 @@ fingerprint() { # fingerprint dnsdist|<id>
 declare -A FP_BEFORE=()
 remember_fingerprints() {
   local id
-  FP_BEFORE[dnsdist]=$(fingerprint dnsdist)
-  for id in "${ENABLED[@]}"; do FP_BEFORE[$id]=$(fingerprint "$id"); done
+  # Empty = not set up by us before (a first install), so no "restarted" message.
+  FP_BEFORE[dnsdist]=""
+  if grep -q "^$DNSDIST_MARK" "$DNSDIST_CONF" 2>/dev/null; then FP_BEFORE[dnsdist]=$(fingerprint dnsdist); fi
+  for id in "${ENABLED[@]}"; do
+    FP_BEFORE[$id]=""
+    if [[ -f $CONF_DIR/$id.conf ]]; then FP_BEFORE[$id]=$(fingerprint "$id"); fi
+  done
 }
 # Start a service, or restart it if it's running with old settings.
 start_or_restart() { # start_or_restart <unit> <fingerprint key>
   if ! systemctl is-active -q "$1"; then
     systemctl start "$1"
-  elif [[ "${FP_BEFORE[$2]:-}" != "$(fingerprint "$2")" ]]; then
+  elif [[ -z "${FP_BEFORE[$2]:-}" ]]; then
+    systemctl restart "$1"                      # first install: quietly
+  elif [[ "${FP_BEFORE[$2]}" != "$(fingerprint "$2")" ]]; then
     systemctl restart "$1"; info "Restarted $1 (it changed)"
   fi
 }
@@ -508,12 +517,13 @@ start_all() {
 # Ask this server for each seed name until it hands out nodes.
 test_local() {
   title "Waiting for the seeders to find nodes (up to 3 minutes)"
-  local id n addr="${LOCAL_V4:-$LOCAL_V6}" waited
+  local id n addr="${LOCAL_V4:-$LOCAL_V6}" waited=0
   for id in "${ENABLED[@]}"; do
-    waited=0; n=0
-    while (( waited < 180 )); do
+    n=0
+    # Wait for a useful number of nodes (10), or until 3 minutes have passed in all.
+    while :; do
       n=$(dig +short +time=2 +tries=1 @"$addr" "${SEED_HOST[$id]}" A 2>/dev/null | grep -c '^[0-9]' || true)
-      (( n > 0 )) && break
+      (( n >= 10 || waited >= 180 )) && break
       sleep 10; waited=$((waited + 10))
     done
     if (( n == 1 )); then ok "${SEED_HOST[$id]}: 1 node so far"
