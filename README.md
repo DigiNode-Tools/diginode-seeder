@@ -11,7 +11,7 @@ It's part of [DigiNode Tools](https://diginode.tools). Guide: [Running a DigiByt
 ## What you need
 
 - A server (VPS) with its own public IP address, running **Debian 12 or 13**, or **Ubuntu 22.04 or 24.04**. 1 GB of memory is plenty.
-- **UDP and TCP port 53** open to the internet. Check your server provider's firewall too.
+- **UDP port 53** open to the internet. Check your server provider's firewall too.
 - A domain you control, where you can add DNS records.
 - Nothing else using port 53 on the server.
 
@@ -67,7 +67,7 @@ Internet ──DNS──▶  dnsdist ──seed.example.com───────
                      └── any other name: refused
 ```
 
-- **One IP, several seeders.** Each seeder needs to answer DNS on port 53, and only one program can use a port. [dnsdist](https://dnsdist.org) answers on port 53 and passes each seed name to its own seeder. Everything else is refused, so the server can't be used as an open DNS server, and each address is rate-limited.
+- **One IP, several seeders.** Each seeder needs to answer DNS on port 53, and only one program can use a port. [dnsdist](https://dnsdist.org) answers on port 53 and passes each seed name to its own seeder. Everything else is refused, so the server can't be used as an open DNS server, and each address is rate-limited. Seeders only answer over UDP (their answers always fit), so questions over TCP are refused.
 - **The seeder** is [DigiNode-Tools/digibyte-seeder](https://github.com/DigiNode-Tools/digibyte-seeder), DigiByte's seeder with DigiByte Core v9 testnet support and options for future network changes. It's built from source on your server.
 - **Each seeder is a locked-down systemd service** (`diginode-seeder@digibyte-mainnet`, `diginode-seeder@digibyte-testnet`) running as its own user. It starts at boot and restarts if it stops. Its crawl data stays between restarts.
 - Seeders answer both plain (`seed.example.com`) and filtered (`x9.seed.example.com`) queries. DigiByte Core asks for the filtered form first.

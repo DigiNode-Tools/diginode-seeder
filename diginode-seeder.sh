@@ -161,7 +161,7 @@ detect_addresses() {
   [[ -n $LOCAL_V4 || -n $LOCAL_V6 ]] || fail "Couldn't find this server's IP address."
   if [[ -n $LOCAL_V4 && $LOCAL_V4 != "$PUBLIC_V4" ]]; then
     warn "This server is behind NAT (local $LOCAL_V4, public $PUBLIC_V4)."
-    warn "Make sure UDP and TCP port 53 are forwarded to $LOCAL_V4."
+    warn "Make sure UDP port 53 is forwarded to $LOCAL_V4."
   fi
 }
 
@@ -431,6 +431,10 @@ write_dnsdist() {
     echo "-- used to flood others."
     echo 'addAction(MaxQPSIPRule(50), DropAction())'
     echo
+    echo "-- The seeders only answer over UDP (their answers always fit), so questions"
+    echo "-- over TCP get a clean \"refused\" instead of a dropped connection."
+    echo 'addAction(TCPRule(true), RCodeAction(DNSRCode.REFUSED))'
+    echo
     for id in "${ENABLED[@]}"; do
       echo "-- ${NET_LABEL[$id]}"
       echo "newServer({address=\"127.0.0.1:${NET_DNS_PORT[$id]}\", pool=\"$id\", checkName=\"${SEED_HOST[$id]}.\", checkType=\"NS\", checkInterval=10, maxCheckFailures=3})"
@@ -451,9 +455,9 @@ write_dnsdist() {
 
 open_firewall() {
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-    ufw allow 53/udp >/dev/null && ufw allow 53/tcp >/dev/null && ok "Firewall (ufw): port 53 opened"
+    ufw allow 53/udp >/dev/null && ok "Firewall (ufw): UDP port 53 opened"
   elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd -q --permanent --add-service=dns && firewall-cmd -q --reload && ok "Firewall (firewalld): DNS opened"
+    firewall-cmd -q --permanent --add-port=53/udp && firewall-cmd -q --reload && ok "Firewall (firewalld): UDP port 53 opened"
   fi
 }
 
@@ -540,7 +544,7 @@ show_dns_records() {
   say ""
   say "  - On Cloudflare, set the $NS_HOST records to ${B}DNS only${R} (grey cloud), not proxied."
   say "  - Delete any other record (A, CNAME...) for the seed names, or the NS records won't work."
-  say "  - Your server provider's firewall must allow ${B}UDP and TCP port 53${R} in."
+  say "  - Your server provider's firewall must allow ${B}UDP port 53${R} in."
   say ""
   say "Then check with:  dig ${SEED_HOST[${ENABLED[0]}]}"
 }
