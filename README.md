@@ -119,6 +119,40 @@ No need to install anything:
 
 Running both seeders? Add both lines in the same pull request.
 
+### Or from the terminal (git and the GitHub CLI)
+
+For anyone comfortable with `git`. You need [`gh`](https://cli.github.com) signed in (`gh auth login`).
+
+```bash
+# 1. Check your seed(s) answer from the internet
+dig +short seed.example.com
+dig +short x9.seed.example.com
+
+# 2. Fork DigiByte Core and clone just the develop branch
+gh repo fork DigiByte-Core/digibyte --clone=false
+git clone --branch develop --single-branch --depth 50 \
+  https://github.com/<your-github-handle>/digibyte.git
+cd digibyte
+git remote add upstream https://github.com/DigiByte-Core/digibyte.git
+git fetch upstream develop
+git switch -c add-seed-example upstream/develop
+
+# 3. Add your line at the end of the mainnet (or testnet) list, matching the lines above it
+#      vSeeds.emplace_back("seed.example.com"); // Your Name @your-github-handle
+grep -n 'vSeeds.emplace_back' src/kernel/chainparams.cpp     # find the lists
+nano src/kernel/chainparams.cpp
+git diff                                                      # one added line per seed, nothing else
+
+# 4. Commit (no @ mentions in the message) and push to your fork
+git commit -am "net: Add seed.example.com DNS seed"
+git push -u origin add-seed-example
+
+# 5. Open the pull request against develop
+gh pr create --repo DigiByte-Core/digibyte --base develop \
+  --title "net: Add seed.example.com DNS seed" \
+  --body "Adds seed.example.com as a mainnet DNS seed, run by Your Name. Running since 1 March on its own server (set up with DigiNode Seeder); returns about 25 nodes for both plain and x9. queries. Happy to be contacted if it ever has a problem."
+```
+
 ### Or let an AI agent do it
 
 If you use an AI coding agent that can run commands and use GitHub (for example [Claude Code](https://claude.com/claude-code) with the GitHub CLI `gh` signed in), paste this prompt in, with your details filled in. It checks your seeder first, prepares the pull request, and shows it to you before anything is published:
