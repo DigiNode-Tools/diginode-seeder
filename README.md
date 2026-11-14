@@ -81,9 +81,83 @@ Internet ──DNS──▶  dnsdist ──seed.example.com───────
 
 Logs: `journalctl -u diginode-seeder@digibyte-mainnet`.
 
-## Getting your seeder into DigiByte Core
+## The last step: get your seeder into DigiByte Core
 
-Nodes only ask the seeders listed in DigiByte Core's `src/kernel/chainparams.cpp`. Once your seeder has run reliably for a while, you can ask for it to be added: see the [DigiByte Core repository](https://github.com/DigiByte-Core/digibyte). The network only needs a handful of seeders, and it's best if each person runs no more than one mainnet and one testnet seeder.
+Your seeder only helps once DigiByte Core lists it. Nodes ask only the seeds written into their own code, in [`src/kernel/chainparams.cpp`](https://github.com/DigiByte-Core/digibyte/blob/develop/src/kernel/chainparams.cpp). To be added, you open a pull request (PR) that adds one line, and the DigiByte Core developers review it. Once it's merged, it goes out with the next release, and nodes start using your seeder as they update.
+
+The network only needs a handful of seeders, so it's best if each person runs no more than one mainnet and one testnet seeder.
+
+### Before you ask
+
+- **Let it run for a couple of weeks** and check now and then that it's still answering. The developers want seeds that stay up.
+- **Check it from the internet**, from any computer:
+  ```bash
+  dig +short seed.example.com        # a list of node addresses
+  dig +short x9.seed.example.com     # the same, for the filtered form nodes ask first
+  ```
+  On the server, `--status` shows the same (see above).
+- **Have a GitHub account.** The line you add includes your name and GitHub handle, so the developers can reach you if your seeder ever has a problem.
+
+### Make the pull request on GitHub's website
+
+No need to install anything:
+
+1. Sign in to GitHub and open [`src/kernel/chainparams.cpp` on the `develop` branch](https://github.com/DigiByte-Core/digibyte/blob/develop/src/kernel/chainparams.cpp).
+2. Click the **pencil** (Edit this file). GitHub makes your own copy (a fork) of DigiByte Core.
+3. Find the right list and add your line at the end of it:
+   - for **mainnet**, the list under `// DigiByte MAINNET DNS Seed Server:`
+   - for **testnet**, the list under `// DigiByte TESTNET DNS Seed Servers:`
+
+   ```cpp
+   vSeeds.emplace_back("seed.example.com"); // Your Name @your-github-handle
+   ```
+   Copy the lines above it exactly, with the same spacing and a semicolon at the end. Change nothing else.
+4. Click **Commit changes…**. As the commit message, write something like `net: Add seed.example.com DNS seed`. DigiByte's rules say commit messages must not contain `@` mentions, so leave your handle out of it: it's only in the line of code. Choose **Create a new branch for this commit and start a pull request**, then **Propose changes**.
+5. Check that the pull request goes **into `DigiByte-Core/digibyte`, branch `develop`**. Give it a title starting with `net:`, such as `net: Add seed.example.com DNS seed`, and a short description, for example:
+   > Adds seed.example.com as a mainnet DNS seed, run by Your Name. It has been running since 1 March on its own server (set up with DigiNode Seeder) and returns about 25 nodes, for both plain and x9. queries. I'll keep it running, and I'm happy to be contacted if it ever has a problem.
+6. Click **Create pull request** and follow any comments from the reviewers.
+
+Running both seeders? Add both lines in the same pull request.
+
+### Or let an AI agent do it
+
+If you use an AI coding agent that can run commands and use GitHub (for example [Claude Code](https://claude.com/claude-code) with the GitHub CLI `gh` signed in), paste this prompt in, with your details filled in. It checks your seeder first, prepares the pull request, and shows it to you before anything is published:
+
+```text
+I run a DigiByte DNS seeder and want it added to DigiByte Core. Please prepare a pull request.
+
+My details:
+- Mainnet seed name: seed.example.com   (leave blank if none)
+- Testnet seed name: testnetseed.example.com   (leave blank if none)
+- My name as it should appear: Your Name
+- My GitHub handle: your-github-handle
+- Running since: 1 March 2027
+
+Steps:
+1. Check each seed name answers from the internet: `dig +short <name>` and
+   `dig +short x9.<name>` should each return several IP addresses. Stop and
+   tell me if either returns nothing.
+2. Fork DigiByte-Core/digibyte with `gh` (if I don't already have a fork) and
+   create a branch from the latest `develop`.
+3. In src/kernel/chainparams.cpp, add one line at the end of the right list,
+   copying the format of the lines above it exactly:
+   - mainnet: the list under "// DigiByte MAINNET DNS Seed Server:"
+   - testnet: the list under "// DigiByte TESTNET DNS Seed Servers:"
+   vSeeds.emplace_back("<seed name>"); // <My name> @<my GitHub handle>
+   Change nothing else in the file.
+4. Commit with a message like "net: Add <seed name> DNS seed". The commit
+   message must not contain any @ mentions (DigiByte's contribution rules).
+5. Show me the diff, the PR title and the PR description, and wait for my OK.
+   The title starts with "net:". The description says which seed(s) it adds,
+   who runs them, since when, and that they answer plain and x9. queries
+   (include the number of addresses each returned).
+6. Only after I say yes: push the branch and open the pull request against
+   DigiByte-Core/digibyte, base branch `develop`. Give me the link.
+```
+
+### After it's merged
+
+Keep your seeder running and updated (run the setup command again now and then). If you ever need to stop it, open another pull request to remove your line, so nodes don't keep asking a seed that has gone.
 
 ## Licence
 

@@ -583,6 +583,10 @@ do_setup() {
     show_dns_records
   fi
   say ""
+  say "${B}Last step:${R} once it has run reliably for a couple of weeks, ask for it to be"
+  say "added to DigiByte Core, so nodes start using it:"
+  say "https://github.com/DigiNode-Tools/diginode-seeder#the-last-step-get-your-seeder-into-digibyte-core"
+  say ""
   say "Status:  curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --status"
   say "Update:  run the setup command again."
 }
