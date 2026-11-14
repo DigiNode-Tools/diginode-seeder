@@ -6,7 +6,7 @@ A DNS seeder helps new DigiByte nodes find the network. When a node starts for t
 
 DigiNode Seeder sets up a **mainnet** seeder, a **testnet** seeder (DigiByte Core v9, testnet26), or both on the same server, with only one IP address.
 
-It's part of [DigiNode Tools](https://diginode.tools). Guide: [Running a DigiByte Seeder](https://diginode.tools/running-a-digibyte-seeder/).
+It's part of [DigiNode Tools](https://diginode.tools). Guide: [DigiNode Seeder on diginode.tools](https://diginode.tools/diginode-seeder/). Prefer to set one up by hand? See the [manual setup guide](https://diginode.tools/diginode-seeder/manual/).
 
 ## What you need
 

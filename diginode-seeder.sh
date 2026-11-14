@@ -9,6 +9,7 @@
 # seed name to its own seeder; each seeder runs as a locked-down systemd
 # service. Run it again at any time to update, change settings or check status.
 #
+# Guide: https://diginode.tools/diginode-seeder/
 # Part of DigiNode Tools: https://diginode.tools
 # Copyright (c) 2026 Oliver Stedall. Licensed under the PolyForm Perimeter
 # License 1.0.0 - see LICENCE.md.
@@ -358,7 +359,7 @@ EOF
 # Written by DigiNode Seeder $DGNS_VERSION
 [Unit]
 Description=DigiNode Seeder (%i)
-Documentation=https://diginode.tools/running-a-digibyte-seeder/
+Documentation=https://diginode.tools/diginode-seeder/
 After=network-online.target
 Wants=network-online.target
 
@@ -547,6 +548,7 @@ show_dns_records() {
   say "  - Your server provider's firewall must allow ${B}UDP port 53${R} in."
   say ""
   say "Then check with:  dig ${SEED_HOST[${ENABLED[0]}]}"
+  say "Help with DNS records: https://diginode.tools/diginode-seeder/#dns-records"
 }
 
 # ---------------------------------------------------------------------------
@@ -585,7 +587,7 @@ do_setup() {
   say ""
   say "${B}Last step:${R} once it has run reliably for a couple of weeks, ask for it to be"
   say "added to DigiByte Core, so nodes start using it:"
-  say "https://github.com/DigiNode-Tools/diginode-seeder#the-last-step-get-your-seeder-into-digibyte-core"
+  say "https://diginode.tools/diginode-seeder/#add-to-digibyte-core"
   say ""
   say "Status:  curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --status"
   say "Update:  run the setup command again."
