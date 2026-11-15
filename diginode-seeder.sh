@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.0"
+DGNS_VERSION="0.2.1"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -553,11 +553,12 @@ open_firewall() {
 # A fingerprint of everything a service runs with, so an update only restarts
 # what changed (a restarted seeder hands out fewer nodes for a minute or two).
 fingerprint() { # fingerprint dnsdist|<id>
+  # The "Written by DigiNode Seeder <version>" lines are left out, so a new version alone restarts nothing.
   if [[ $1 == dnsdist ]]; then
-    { cat "$DNSDIST_CONF" 2>/dev/null || true; } | sha256sum
+    { cat "$DNSDIST_CONF" 2>/dev/null || true; } | grep -v '^-- Written by DigiNode Seeder' | sha256sum
   else
     { cat "$UNIT_FILE" "$INSTALL_DIR/bin/run-seeder" "$CONF_DIR/$1.conf" \
-          "$INSTALL_DIR/bin/${1%%-*}-seeder.commit" 2>/dev/null || true; } | sha256sum
+          "$INSTALL_DIR/bin/${1%%-*}-seeder.commit" 2>/dev/null || true; } | grep -v '^# Written by DigiNode Seeder' | sha256sum
   fi
 }
 declare -A FP_BEFORE=()
