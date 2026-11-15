@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.5"
+DGNS_VERSION="0.2.6"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -60,7 +60,9 @@ declare -A NET_SHORT=(                      # short name for the status table
 )
 declare -A NET_ARGS=(                       # extra seeder arguments
   [digibyte-mainnet]=""
-  [digibyte-testnet]="--testnet"
+  # testnet26 started again from block 0, so the seeder's own minimum is 0. A recent height leaves out nodes
+  # that are stuck or on their own fork (at block ~651,000 on 15 Nov 2026). Raise it now and then.
+  [digibyte-testnet]="--testnet --minheight 600000"
 )
 declare -A NET_DNS_PORT=(                   # local port dnsdist forwards to
   [digibyte-mainnet]=5301
