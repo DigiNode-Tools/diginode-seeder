@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.1.0"
+DGNS_VERSION="0.1.1"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -333,6 +333,12 @@ build_seeders() {
       git clone -q --branch "${CHAIN_BRANCH[$chain]}" "${CHAIN_REPO[$chain]}" "$src"
     fi
     commit=$(git -C "$src" rev-parse --short HEAD)
+    # Same code as the program already built: nothing to do. (Builds aren't byte-identical, so rebuilding would
+    # make the seeder look changed and restart it, and a restarted seeder hands out few nodes for a while.)
+    if [[ -x $INSTALL_DIR/bin/$chain-seeder ]] && [[ $(cat "$INSTALL_DIR/bin/$chain-seeder.commit" 2>/dev/null) == "$commit" ]]; then
+      ok "${CHAIN_NAME[$chain]} seeder is up to date (${CHAIN_REPO[$chain]%.git} @ $commit)"
+      continue
+    fi
     make -C "$src" -s clean >/dev/null 2>&1 || true
     local jobs; jobs=$(nproc); (( MEM_MB < 1500 )) && jobs=1
     make -C "$src" -s -j"$jobs" >/dev/null 2>&1 || { make -C "$src" 2>&1 | tail -20; fail "The build failed."; }
@@ -475,7 +481,7 @@ fingerprint() { # fingerprint dnsdist|<id>
     { cat "$DNSDIST_CONF" 2>/dev/null || true; } | sha256sum
   else
     { cat "$UNIT_FILE" "$INSTALL_DIR/bin/run-seeder" "$CONF_DIR/$1.conf" \
-          "$INSTALL_DIR/bin/${1%%-*}-seeder" 2>/dev/null || true; } | sha256sum
+          "$INSTALL_DIR/bin/${1%%-*}-seeder.commit" 2>/dev/null || true; } | sha256sum
   fi
 }
 declare -A FP_BEFORE=()
