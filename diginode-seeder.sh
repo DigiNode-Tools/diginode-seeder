@@ -414,7 +414,7 @@ show_summary() {
   for id in "${ENABLED[@]}"; do
     printf '  %-36s %s  %s(nodes on port %s)%s\n' "${NET_LABEL[$id]}" "${SEED_HOST[$id]}" "$DIM" "${NET_P2P_PORT[$id]}" "$R"
   done
-  printf '  %-36s %s\n' "Nameserver (this server)" "$NS_HOST"
+  printf '  %-36s %s\n' "Server name" "$NS_HOST"
   printf '  %-36s %s\n' "Contact email" "$SOA_EMAIL"
   printf '  %-36s %s\n' "Login message" "${MOTD:-yes}"
   local upd="no"
