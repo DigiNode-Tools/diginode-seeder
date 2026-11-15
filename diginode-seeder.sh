@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.9"
+DGNS_VERSION="0.2.10"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -1117,10 +1117,11 @@ Steps:
    nslookup, or an online DNS lookup). Stop and tell me if any returns nothing.
 2. Check I'm signed in to GitHub. If I don't have a GitHub account, stop and tell
    me to create one at https://github.com/signup first.
-3. Fork DigiByte-Core/digibyte (if I don't already have a fork) and work on a new
-   branch from the latest \`develop\` branch. (On GitHub's website, editing the
-   file on the develop branch and choosing "Create a new branch for this commit
-   and start a pull request" does this.)
+3. If I don't have a fork of DigiByte-Core/digibyte yet, create one in my GitHub
+   account (a public copy, which is normal and fine to do before my OK). Work on
+   a new branch from the latest \`develop\` branch. (On GitHub's website, editing
+   the file on the develop branch and choosing "Create a new branch for this
+   commit and start a pull request" does this.)
 4. In ${CHAIN_CORE_FILE[$chain]}, add these lines, each at the end of its list
    (mainnet: under "// DigiByte MAINNET DNS Seed Server:", testnet: under
    "// DigiByte TESTNET DNS Seed Servers:"), copying the format of the lines
