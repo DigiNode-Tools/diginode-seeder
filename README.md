@@ -29,7 +29,7 @@ It asks which seeders to run and what to call them:
 - **A nameserver name** for the server, such as `dnsseed.example.com`.
 - **A contact email**, shown in the seeds' DNS records.
 
-Then it builds the seeder, starts everything, waits until the seeders find nodes, and shows the DNS records to add:
+Then it builds the seeder, starts everything, waits until the seeders find nodes, and shows the DNS records to add. Add them, press Enter, and it checks them for you, saying what's wrong if anything is:
 
 ```
 dnsseed.example.com       A     203.0.113.10
@@ -40,15 +40,21 @@ testnetseed.example.com   NS    dnsseed.example.com
 
 On Cloudflare, set the nameserver's records to **DNS only** (grey cloud). Once the records are live, `dig seed.example.com` should return a list of node addresses.
 
-## Update, check, remove
+## After setup: the `diginode-seeder` command
 
-Run the same command again at any time. It keeps your settings, updates the seeder, and only restarts what changed.
+The setup installs a `diginode-seeder` command on the server:
 
 ```bash
-curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --status        # is everything working?
-curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --reconfigure   # change names or seeders
-curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --uninstall     # stop and remove
+diginode-seeder                    # how the seeders are doing, and how to get them into DigiByte Core
+diginode-seeder --dns              # check your DNS records, and explain anything that's wrong
+diginode-seeder --ai-prompt        # a ready-made prompt for an AI agent to add your seed to DigiByte Core
+sudo diginode-seeder --update      # update DigiNode Seeder and the seeders (keeps your settings)
+sudo diginode-seeder --reconfigure # change names or seeders
+sudo diginode-seeder --uninstall   # stop and remove
+diginode-seeder --help             # all options
 ```
+
+Updating only restarts what changed. Running the setup command again also updates.
 
 For automation, every answer can be given as an option:
 
@@ -95,7 +101,7 @@ The network only needs a handful of seeders, so it's best if each person runs no
   dig +short seed.example.com        # a list of node addresses
   dig +short x9.seed.example.com     # the same, for the filtered form nodes ask first
   ```
-  On the server, `--status` shows the same (see above).
+  On the server, `diginode-seeder` shows the same, and once your seed works it shows the exact line to add.
 - **Have a GitHub account.** The line you add includes your name and GitHub handle, so the developers can reach you if your seeder ever has a problem.
 
 ### Make the pull request on GitHub's website
@@ -155,7 +161,7 @@ gh pr create --repo DigiByte-Core/digibyte --base develop \
 
 ### Or let an AI agent do it
 
-If you use an AI coding agent that can run commands and use GitHub (for example [Claude Code](https://claude.com/claude-code) with the GitHub CLI `gh` signed in), paste this prompt in, with your details filled in. It checks your seeder first, prepares the pull request, and shows it to you before anything is published:
+If you use an AI coding agent that can run commands and use GitHub (for example [Claude Code](https://claude.com/claude-code) with the GitHub CLI `gh` signed in), run `diginode-seeder --ai-prompt` on your server: it asks your name and GitHub handle and prints this prompt with everything filled in. Or paste it in yourself, with your details. It checks your seeder first, prepares the pull request, and shows it to you before anything is published:
 
 ```text
 I run a DigiByte DNS seeder and want it added to DigiByte Core. Please prepare a pull request.

@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.1.1"
+DGNS_VERSION="0.2.0"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -29,6 +29,9 @@ RUN_USER="diginode-seeder"
 UNIT_FILE="/etc/systemd/system/diginode-seeder@.service"
 DNSDIST_CONF="/etc/dnsdist/dnsdist.conf"
 DNSDIST_MARK="-- Written by DigiNode Seeder"
+CMD_LINK="/usr/local/bin/diginode-seeder"  # the diginode-seeder command
+RELEASES_URL="https://github.com/DigiNode-Tools/diginode-seeder/releases"
+GUIDE_URL="https://diginode.tools/diginode-seeder/"
 
 # ---------------------------------------------------------------------------
 # Chains and networks
@@ -66,6 +69,14 @@ declare -A NET_SEED_PREFIX=(                # suggested seed name
   [digibyte-mainnet]="seed"
   [digibyte-testnet]="testnetseed"
 )
+# Where the chain's node software lists its seeds, for the "add it to DigiByte Core" step.
+declare -A CHAIN_CORE_NAME=([digibyte]="DigiByte Core")
+declare -A CHAIN_CORE_FILE=([digibyte]="src/kernel/chainparams.cpp")
+declare -A CHAIN_CORE_RAW=([digibyte]="https://raw.githubusercontent.com/DigiByte-Core/digibyte/develop/src/kernel/chainparams.cpp")
+declare -A NET_CORE_LIST=(                  # the list in that file the seed goes into
+  [digibyte-mainnet]="mainnet list"
+  [digibyte-testnet]="testnet list"
+)
 
 # ---------------------------------------------------------------------------
 # Output helpers
@@ -82,13 +93,47 @@ warn()  { printf '%s[!]%s %s\n' "$YLW" "$R" "$*"; }
 fail()  { printf '%s[✗]%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
 title() { printf '\n%s%s%s\n' "$B" "$*" "$R"; }
 
+# Run a slow command with a spinner and the time so far, so it never looks frozen.
+# Its output goes to a log, shown only if it fails.
+spin() { # spin "Message" command [args...]
+  local msg="$1"; shift
+  local log rc=0; log=$(mktemp)
+  if [[ -t 1 ]]; then
+    "$@" >"$log" 2>&1 &
+    local pid=$! s=0 i=0 chars='|/-\'
+    while kill -0 "$pid" 2>/dev/null; do
+      printf '\r%s[%s]%s %s  %s%dm %02ds%s ' "$CYN" "${chars:i%4:1}" "$R" "$msg" "$DIM" $((s / 60)) $((s % 60)) "$R"
+      i=$((i + 1)); sleep 1; s=$((s + 1))
+    done
+    wait "$pid" || rc=$?
+    printf '\r\e[K'
+  else
+    say "... $msg"
+    "$@" >"$log" 2>&1 || rc=$?
+  fi
+  if (( rc != 0 )); then tail -25 "$log" >&2; fi
+  rm -f "$log"
+  return "$rc"
+}
+
+# The command to show users: the installed one, or the curl one if it isn't installed.
+cmd_hint() { # cmd_hint [--option] [sudo]
+  if [[ -x $CMD_LINK ]]; then
+    printf '%s%s%s' "${2:+sudo }" "diginode-seeder" "${1:+ $1}"
+  else
+    printf 'curl -sSL https://seedsetup.diginode.tools | sudo bash%s' "${1:+ -s -- $1}"
+  fi
+}
+
 # Questions read from the terminal, so the script also works with curl | bash.
 TTY="/dev/tty"
 ASSUME_YES=0
+# /dev/tty can exist without a terminal behind it (e.g. ssh without one), so try opening it.
+has_tty() { { : < "$TTY"; } 2>/dev/null; }
 ask() { # ask "Question" "default" -> REPLY
   local q="$1" def="${2:-}"
   if [[ $ASSUME_YES -eq 1 ]]; then REPLY="$def"; return; fi
-  [[ -r $TTY ]] || fail "No terminal to ask questions on. Use the command-line options (see --help)."
+  has_tty || fail "No terminal to ask questions on. Use the command-line options (see --help)."
   if [[ -n $def ]]; then printf '%s %s[%s]%s: ' "$q" "$DIM" "$def" "$R" > "$TTY"
   else printf '%s: ' "$q" > "$TTY"; fi
   IFS= read -r REPLY < "$TTY" || true
@@ -98,7 +143,7 @@ confirm() { # confirm "Question" [default y|n]
   local def="${2:-y}" hint="[Y/n]"
   [[ $def == n ]] && hint="[y/N]"
   if [[ $ASSUME_YES -eq 1 ]]; then [[ $def == y ]]; return; fi
-  [[ -r $TTY ]] || fail "No terminal to ask questions on. Use --yes to accept the defaults."
+  has_tty || fail "No terminal to ask questions on. Use --yes to accept the defaults."
   printf '%s %s ' "$1" "$hint" > "$TTY"
   local a; IFS= read -r a < "$TTY" || true
   a="${a:-$def}"
@@ -122,8 +167,14 @@ email_to_mbox() {
   printf '%s.%s' "$user" "$domain"
 }
 
+need_root() {
+  [[ $EUID -eq 0 ]] && return 0
+  if [[ $AS_COMMAND -eq 1 ]]; then fail "Please run it with sudo: sudo diginode-seeder${ARGS_TEXT:+ $ARGS_TEXT}"
+  else fail "Please run as root, for example: curl -sSL https://seedsetup.diginode.tools | sudo bash"; fi
+}
+
 check_system() {
-  [[ $EUID -eq 0 ]] || fail "Please run as root, for example: curl -sSL https://seedsetup.diginode.tools | sudo bash"
+  need_root
   [[ -r /etc/os-release ]] || fail "Can't tell which Linux this is (no /etc/os-release)."
   # shellcheck disable=SC1091
   . /etc/os-release
@@ -190,7 +241,7 @@ check_port53() {
 # Settings
 # ---------------------------------------------------------------------------
 load_settings() {
-  NS_HOST=""; SOA_EMAIL=""; ENABLED=()
+  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; ENABLED=()
   declare -gA SEED_HOST=()
   [[ -r $CONF_DIR/settings ]] || return 1
   # shellcheck disable=SC1091
@@ -212,6 +263,7 @@ save_settings() {
 # DigiNode Seeder settings. Run the setup again to change them.
 NS_HOST="$NS_HOST"
 SOA_EMAIL="$SOA_EMAIL"
+SETUP_DATE="${SETUP_DATE:-$(date -u +%F)}"
 EOF
   local id mbox
   mbox=$(email_to_mbox "$SOA_EMAIL")
@@ -307,11 +359,14 @@ show_summary() {
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
+apt_install() {
+  apt-get update -qq
+  apt-get install -y -qq build-essential libssl-dev libboost-dev git dnsdist dnsutils curl ca-certificates
+}
 install_packages() {
   title "Installing packages"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq build-essential libssl-dev libboost-dev git dnsdist dnsutils curl ca-certificates >/dev/null
+  spin "Installing build tools, dnsdist and dig (usually 1-2 minutes)" apt_install || fail "Installing packages failed."
   ok "build tools, dnsdist and dig installed"
 }
 
@@ -327,10 +382,10 @@ build_seeders() {
     title "Building the ${CHAIN_NAME[$chain]} seeder"
     src="$INSTALL_DIR/src/$chain-seeder"
     if [[ -d $src/.git ]]; then
-      git -C "$src" fetch -q origin "${CHAIN_BRANCH[$chain]}"
+      spin "Checking for seeder updates" git -C "$src" fetch -q origin "${CHAIN_BRANCH[$chain]}" || fail "Couldn't reach GitHub."
       git -C "$src" reset -q --hard "origin/${CHAIN_BRANCH[$chain]}"
     else
-      git clone -q --branch "${CHAIN_BRANCH[$chain]}" "${CHAIN_REPO[$chain]}" "$src"
+      spin "Downloading the seeder's source code" git clone -q --branch "${CHAIN_BRANCH[$chain]}" "${CHAIN_REPO[$chain]}" "$src" || fail "Couldn't download the seeder from GitHub."
     fi
     commit=$(git -C "$src" rev-parse --short HEAD)
     # Same code as the program already built: nothing to do. (Builds aren't byte-identical, so rebuilding would
@@ -341,7 +396,7 @@ build_seeders() {
     fi
     make -C "$src" -s clean >/dev/null 2>&1 || true
     local jobs; jobs=$(nproc); (( MEM_MB < 1500 )) && jobs=1
-    make -C "$src" -s -j"$jobs" >/dev/null 2>&1 || { make -C "$src" 2>&1 | tail -20; fail "The build failed."; }
+    spin "Building the ${CHAIN_NAME[$chain]} seeder (usually 2-5 minutes)" make -C "$src" -s -j"$jobs" || fail "The build failed."
     install -m 755 "$src/dnsseed" "$INSTALL_DIR/bin/$chain-seeder.new"
     mv -f "$INSTALL_DIR/bin/$chain-seeder.new" "$INSTALL_DIR/bin/$chain-seeder"
     echo "$commit" > "$INSTALL_DIR/bin/$chain-seeder.commit"
@@ -417,6 +472,27 @@ MemoryMax=1G
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
+}
+
+# Install this script as the diginode-seeder command. When it was piped from curl there's no file to copy,
+# so the same version is downloaded from its GitHub release.
+install_command() {
+  local src="${BASH_SOURCE[0]:-}" tmp=""
+  if [[ -z $src || ! -f $src ]]; then
+    tmp=$(mktemp); src="$tmp"
+    if ! curl -fsSL -m 60 "$RELEASES_URL/download/v$DGNS_VERSION/diginode-seeder.sh" -o "$tmp" 2>/dev/null \
+       || ! grep -qx "DGNS_VERSION=\"$DGNS_VERSION\"" "$tmp"; then
+      rm -f "$tmp"
+      warn "Couldn't install the diginode-seeder command (version $DGNS_VERSION isn't on GitHub)."
+      return 0
+    fi
+  fi
+  if [[ $(realpath "$src") != "$(realpath "$INSTALL_DIR/bin/diginode-seeder" 2>/dev/null || true)" ]]; then
+    install -m 755 "$src" "$INSTALL_DIR/bin/diginode-seeder.new"
+    mv -f "$INSTALL_DIR/bin/diginode-seeder.new" "$INSTALL_DIR/bin/diginode-seeder"   # a new file, so a running copy isn't disturbed
+  fi
+  [[ -z $tmp ]] || rm -f "$tmp"
+  ln -sfn "$INSTALL_DIR/bin/diginode-seeder" "$CMD_LINK"
 }
 
 write_dnsdist() {
@@ -534,20 +610,89 @@ test_local() {
     while :; do
       n=$(dig +short +time=2 +tries=1 @"$addr" "${SEED_HOST[$id]}" A 2>/dev/null | grep -c '^[0-9]' || true)
       (( n >= 10 || waited >= 180 )) && break
-      sleep 10; waited=$((waited + 10))
+      [[ -t 1 ]] && printf '\r%s[…]%s %s: %s nodes so far  %s%dm %02ds%s ' "$CYN" "$R" "${SEED_HOST[$id]}" "$n" "$DIM" $((waited / 60)) $((waited % 60)) "$R"
+      sleep 5; waited=$((waited + 5))
     done
+    [[ -t 1 ]] && printf '\r\e[K'
     if (( n == 1 )); then ok "${SEED_HOST[$id]}: 1 node so far"
     elif (( n > 1 )); then ok "${SEED_HOST[$id]}: $n nodes so far"
-    else warn "${SEED_HOST[$id]}: no nodes yet. It can take a few minutes; check later with: $0 --status"; fi
+    else warn "${SEED_HOST[$id]}: no nodes yet. It can take a few minutes; check later with: $(cmd_hint)"; fi
   done
 }
 
-# Is the seed name reachable from the internet yet?
-test_public() {
-  local id n all=0
+# Where the seed name is handed to, asked straight from its parent zone's nameserver (so no cached answers).
+# Sets DELEG_NS (nameserver names) and DELEG_IPS (their addresses).
+find_delegation() { # find_delegation <name>
+  local name="$1" parent="${1#*.}" pns="" resp n
+  DELEG_NS=""; DELEG_IPS=""
+  while [[ $parent == *.* ]]; do
+    pns=$(dig +short +time=3 +tries=1 @1.1.1.1 "$parent" NS 2>/dev/null | head -1)
+    [[ -n $pns ]] && break
+    parent="${parent#*.}"
+  done
+  [[ -n $pns ]] || return 0
+  resp=$(dig +norec +time=3 +tries=2 @"$pns" "$name" NS 2>/dev/null || true)
+  DELEG_NS=$(awk -v n="${name,,}." 'tolower($1)==n && $4=="NS" {print tolower($5)}' <<<"$resp" | sed 's/\.$//' | sort -u)
+  DELEG_IPS=$(awk '$4=="A" || $4=="AAAA" {print tolower($5)}' <<<"$resp" | sort -u)
+  if [[ -n $DELEG_NS && -z $DELEG_IPS ]]; then       # no glue: look the nameservers up
+    for n in $DELEG_NS; do
+      DELEG_IPS+=$'\n'$(dig +short +time=3 +tries=1 @1.1.1.1 "$n" A "$n" AAAA 2>/dev/null | grep -E '^[0-9a-f:.]+$' || true)
+    done
+  fi
+}
+
+points_here() { # does this list of addresses include this server?
+  [[ -n $PUBLIC_V4 ]] && grep -qxF "$PUBLIC_V4" <<<"$1" && return 0
+  [[ -n $LOCAL_V6 ]] && grep -qixF "$LOCAL_V6" <<<"$1" && return 0
+  return 1
+}
+
+# Check each seed name's DNS records and, if something is wrong, say what. Returns 0 if all are right.
+# "quiet": only the result (used before showing the records).
+check_dns() { # check_dns [quiet]
+  local id n all=0 quiet="${1:-}" name
   for id in "${ENABLED[@]}"; do
-    n=$(dig +short +time=3 +tries=1 @1.1.1.1 "${SEED_HOST[$id]}" A 2>/dev/null | grep -c '^[0-9]' || true)
-    if (( n > 0 )); then ok "${SEED_HOST[$id]} works from the internet ($n nodes via 1.1.1.1)"; else all=1; fi
+    name="${SEED_HOST[$id]}"
+    find_delegation "$name"
+    if [[ -z $DELEG_NS ]]; then
+      all=1
+      [[ -n $quiet ]] && continue
+      printf '  %b %s\n' "${YLW}!${R}" "$name"
+      n=$(dig +short +time=3 +tries=1 @1.1.1.1 "$name" A 2>/dev/null | grep -c '^[0-9]' || true)
+      if (( n > 0 )); then say "      It has an A (or CNAME) record. Delete it, and add:  $name  NS  $NS_HOST"
+      else say "      No NS record yet. Add:  $name  NS  $NS_HOST"; fi
+      continue
+    fi
+    if ! points_here "$DELEG_IPS"; then
+      all=1
+      [[ -n $quiet ]] && continue
+      printf '  %b %s\n' "${YLW}!${R}" "$name"
+      if [[ -z $(tr -d '[:space:]' <<<"$DELEG_IPS") ]]; then
+        say "      It's handed to $(tr '\n' ' ' <<<"$DELEG_NS")but that name has no address. Add:  $NS_HOST  A  $PUBLIC_V4"
+      elif grep -qE '^(104\.(1[6-9]|2[0-9]|3[01])\.|172\.(6[4-9]|7[01])\.|2606:4700:)' <<<"$DELEG_IPS"; then
+        say "      $(head -1 <<<"$DELEG_NS") is proxied by Cloudflare. Set its records to DNS only (grey cloud)."
+      else
+        say "      It's handed to $(tr '\n' ' ' <<<"$DELEG_NS")at $(tr '\n' ' ' <<<"$DELEG_IPS" | xargs), not this server ($PUBLIC_V4${LOCAL_V6:+, $LOCAL_V6})."
+        if grep -qxF "$NS_HOST" <<<"$DELEG_NS"; then
+          say "      Change the $NS_HOST records to this server's address (see below)."
+        else
+          say "      Either change its NS record to $NS_HOST, or point $(head -1 <<<"$DELEG_NS") at this server."
+        fi
+      fi
+      continue
+    fi
+    # The records are right. Does an answer arrive through public DNS?
+    n=$(dig +short +time=3 +tries=1 @1.1.1.1 "$name" A 2>/dev/null | grep -c '^[0-9]' || true)
+    if (( n > 0 )); then
+      [[ -n $quiet ]] || printf '  %b %s  %s nodes\n' "${GRN}✓${R}" "$name" "$n"
+    else
+      all=1
+      [[ -n $quiet ]] && continue
+      printf '  %b %s\n' "${YLW}!${R}" "$name"
+      say "      The records are right, but no answer arrives through public DNS yet. Public DNS can"
+      say "      remember the old answer for up to 30 minutes. If it still fails after that, check that"
+      say "      UDP port 53 is open in your server provider's firewall."
+    fi
   done
   return $all
 }
@@ -567,8 +712,23 @@ show_dns_records() {
   say "  - Delete any other record (A, CNAME...) for the seed names, or the NS records won't work."
   say "  - Your server provider's firewall must allow ${B}UDP port 53${R} in."
   say ""
-  say "Then check with:  dig ${SEED_HOST[${ENABLED[0]}]}"
-  say "Help with DNS records: https://diginode.tools/diginode-seeder/#dns-records"
+  say "Help with DNS records: ${GUIDE_URL}#dns-records"
+}
+
+# After showing the records: wait while they're added, then check them (and again, until they work or the user stops).
+wait_for_dns() {
+  [[ $ASSUME_YES -eq 0 ]] && has_tty || return 1
+  local a
+  while :; do
+    say ""
+    printf '%s ' "Press ${B}Enter${R} once you've added them, to check them (or type ${B}q${R} to check later):" > "$TTY"
+    IFS= read -r a < "$TTY" || a=q
+    [[ $a =~ ^[Qq] ]] && return 1
+    title "Checking your DNS records"
+    check_dns && return 0
+    say ""
+    say "DNS changes can take a few minutes. Try again, or check later with: $(cmd_hint --dns)"
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -594,23 +754,32 @@ do_setup() {
   install_packages
   build_seeders
   install_service
+  install_command
   save_settings
   write_dnsdist
   open_firewall
   start_all
   test_local
-  if test_public; then
-    title "All done"
+  local dns_ok=0
+  if check_dns quiet; then
+    title "Your DNS records"
+    check_dns || true
+    dns_ok=1
   else
     show_dns_records
+    wait_for_dns && dns_ok=1
   fi
-  say ""
-  say "${B}Last step:${R} once it has run reliably for a couple of weeks, ask for it to be"
-  say "added to DigiByte Core, so nodes start using it:"
-  say "https://diginode.tools/diginode-seeder/#add-to-digibyte-core"
-  say ""
-  say "Status:  curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --status"
-  say "Update:  run the setup command again."
+  title "All done. What's next"
+  if [[ $dns_ok -eq 0 ]]; then
+    say "  - Add the DNS records above, then check them:   ${B}$(cmd_hint --dns)${R}"
+  fi
+  say "  - See how it's doing, now and then:              ${B}$(cmd_hint)${R}"
+  say "  - Update it (keeps your settings):               ${B}$(cmd_hint --update sudo)${R}"
+  say "  - After a couple of weeks, ask for your seed to be added to ${CHAIN_CORE_NAME[${ENABLED[0]%%-*}]},"
+  say "    so nodes start using it. ${B}$(cmd_hint)${R} shows the line to add, and the guide shows how:"
+  say "    ${GUIDE_URL}#add-to-digibyte-core"
+  [[ -x $CMD_LINK ]] && say "  - All commands:   ${B}diginode-seeder --help${R}"
+  return 0
 }
 
 do_status() {
@@ -634,17 +803,155 @@ do_status() {
     printf '    %s%s seeder build %s (%s)%s\n' "$DIM" "${CHAIN_NAME[$chain]}" \
       "$(cat "$INSTALL_DIR/bin/$chain-seeder.commit")" "${repo%.git}" "$R"
   done
-  title "From the internet (through public DNS)"
-  for id in "${ENABLED[@]}"; do
-    n=$(dig +short +time=3 +tries=1 @1.1.1.1 "${SEED_HOST[$id]}" A 2>/dev/null | grep -c '^[0-9]' || true)
-    if (( n > 0 )); then printf '  %b %-*s  %s nodes\n' "${GRN}✓${R}" "$w" "${SEED_HOST[$id]}" "$n"
-    else printf '  %b %-*s  not reachable yet: check its DNS records\n' "${YLW}!${R}" "$w" "${SEED_HOST[$id]}"; fi
-  done
+  title "From the internet (DNS records and public DNS)"
+  local dns_ok=0
+  check_dns && dns_ok=1
+  show_core_status "$dns_ok"
   say ""
-  say "Logs: journalctl -u diginode-seeder@<name>   (e.g. diginode-seeder@${ENABLED[0]})"
+  say "${DIM}Logs: journalctl -u diginode-seeder@${ENABLED[0]}    Commands: diginode-seeder --help${R}"
+}
+
+# Is each seed in the node software's seed list yet? If not, show the line to add, and when.
+show_core_status() { # show_core_status <dns_ok 0|1>
+  local dns_ok="$1" chain id src days=0 since="" missing=()
+  chain="${ENABLED[0]%%-*}"
+  title "${CHAIN_CORE_NAME[$chain]}"
+  src=$(curl -fsS -m 10 "${CHAIN_CORE_RAW[$chain]}" 2>/dev/null || true)
+  for id in "${ENABLED[@]}"; do
+    if [[ -n $src ]] && grep -qF "\"${SEED_HOST[$id]}\"" <<<"$src"; then
+      printf '  %b %s is in %s (develop branch)\n' "${GRN}✓${R}" "${SEED_HOST[$id]}" "${CHAIN_CORE_NAME[$chain]}"
+    else
+      missing+=("$id")
+    fi
+  done
+  [[ ${#missing[@]} -gt 0 ]] || return 0
+  if [[ -n $SETUP_DATE ]]; then
+    days=$(( ( $(date -u +%s) - $(date -u -d "$SETUP_DATE" +%s) ) / 86400 ))
+    since=$(date -u -d "$SETUP_DATE" '+%-d %B %Y')
+  fi
+  if [[ $dns_ok -eq 0 ]]; then
+    say "  Not listed yet. Once your DNS records work and it has run reliably for a couple of"
+    say "  weeks, ask for it to be added, so nodes start using it."
+  elif (( days >= 14 )); then
+    say "  Not listed yet. It has run since $since ($days days): time to ask for it to be added,"
+    say "  so nodes start using it."
+  else
+    say "  Not listed yet. Set up on $since. Once it has run reliably for a couple of weeks"
+    say "  (from $(date -u -d "$SETUP_DATE + 14 days" '+%-d %B %Y')), ask for it to be added, so nodes start using it."
+  fi
+  say ""
+  say "  The line to add to ${CHAIN_CORE_FILE[$chain]}, at the end of the right list:"
+  for id in "${missing[@]}"; do
+    printf '    %s%-13s%s vSeeds.emplace_back("%s"); // Your Name @your-github-handle\n' "$DIM" "${NET_CORE_LIST[$id]}:" "$R" "${SEED_HOST[$id]}"
+  done
+  say "  How, on GitHub's website or in a terminal:  ${GUIDE_URL}#add-to-digibyte-core"
+  say "  Or let an AI agent do it for you. Get a ready-made prompt with:  ${B}diginode-seeder --ai-prompt${R}"
+}
+
+# A ready-to-paste prompt for an AI agent that makes the pull request, filled in with this server's details.
+do_ai_prompt() {
+  load_settings || fail "DigiNode Seeder isn't set up on this server."
+  detect_addresses >/dev/null
+  local chain id name handle src n since lines="" checks="" listed=() todo=()
+  chain="${ENABLED[0]%%-*}"
+  src=$(curl -fsS -m 10 "${CHAIN_CORE_RAW[$chain]}" 2>/dev/null || true)
+  for id in "${ENABLED[@]}"; do
+    if [[ -n $src ]] && grep -qF "\"${SEED_HOST[$id]}\"" <<<"$src"; then listed+=("${SEED_HOST[$id]}"); else todo+=("$id"); fi
+  done
+  for name in "${listed[@]}"; do ok "$name is already in ${CHAIN_CORE_NAME[$chain]}."; done
+  [[ ${#todo[@]} -gt 0 ]] || return 0
+
+  title "A prompt for an AI agent"
+  say "An AI agent that can run commands and use GitHub (for example Claude Code, with the"
+  say "GitHub CLI 'gh' signed in) can make the pull request for you. It checks your seeder,"
+  say "prepares everything, and shows it to you before anything is published."
+  say ""
+  name="Your Name"; handle="your-github-handle"
+  if [[ $ASSUME_YES -eq 0 ]] && has_tty; then
+    say "Your name and GitHub handle go in the line you add, so the developers can reach you."
+    ask "Your name, as it should appear" ""; [[ -n $REPLY ]] && name="$REPLY"
+    ask "Your GitHub handle (without @)" ""; [[ -n $REPLY ]] && handle="${REPLY#@}"
+  fi
+  since=$(date -u -d "${SETUP_DATE:-today}" '+%-d %B %Y')
+  for id in "${todo[@]}"; do
+    n=$(dig +short +time=2 +tries=1 @"${LOCAL_V4:-$LOCAL_V6}" "${SEED_HOST[$id]}" A 2>/dev/null | grep -c '^[0-9]' || true)
+    lines+="- ${NET_LABEL[$id]} seed: ${SEED_HOST[$id]}  (goes in the ${NET_CORE_LIST[$id]}; it currently returns about $n nodes)"$'\n'
+    checks+="   At the end of the ${NET_CORE_LIST[$id]}:"$'\n'"     vSeeds.emplace_back(\"${SEED_HOST[$id]}\"); // $name @$handle"$'\n'
+  done
+
+  say ""
+  say "Copy everything between the lines and paste it into your AI agent:"
+  say "${DIM}------------------------------------------------------------------------------${R}"
+  cat <<EOF
+I run a ${CHAIN_NAME[$chain]} DNS seeder (set up with DigiNode Seeder) and want it added to
+${CHAIN_CORE_NAME[$chain]}. Please prepare a pull request for me. I'm not familiar with Git, so
+explain each step briefly as you go.
+
+My details:
+${lines}- My name as it should appear: $name
+- My GitHub handle: $handle
+- Running since: $since
+
+Steps:
+1. Check each seed name answers from the internet: \`dig +short <name>\` and
+   \`dig +short x9.<name>\` (or nslookup, on Windows) should each return several
+   IP addresses. Stop and tell me if any returns nothing.
+2. Check I'm signed in to GitHub with \`gh auth status\`. If not, help me sign in
+   (\`gh auth login\`), or install the GitHub CLI first if it's missing.
+3. Fork DigiByte-Core/digibyte with \`gh\` (if I don't already have a fork) and
+   create a branch from the latest \`develop\` branch.
+4. In ${CHAIN_CORE_FILE[$chain]}, add these lines, each at the end of its list
+   (mainnet: under "// DigiByte MAINNET DNS Seed Server:", testnet: under
+   "// DigiByte TESTNET DNS Seed Servers:"), copying the format of the lines
+   above exactly:
+${checks}   Change nothing else in the file.
+5. Commit with a message like "net: Add <seed name> DNS seed". The commit
+   message must not contain any @ mentions (DigiByte's contribution rules).
+6. Show me the diff, the PR title and the PR description, and wait for my OK.
+   The title starts with "net:". The description says which seed(s) it adds,
+   who runs them, since when, and that they answer plain and x9. queries
+   (with the number of addresses each returned).
+7. Only after I say yes: push the branch and open the pull request against
+   DigiByte-Core/digibyte, base branch \`develop\`. Give me the link, and tell
+   me how to follow the reviewers' comments.
+EOF
+  say "${DIM}------------------------------------------------------------------------------${R}"
+  say "More about this step: ${GUIDE_URL}#add-to-digibyte-core"
+}
+
+do_dns() {
+  load_settings || fail "DigiNode Seeder isn't set up on this server."
+  detect_addresses >/dev/null
+  title "Checking your DNS records"
+  if check_dns; then say ""; ok "All your seed names work."; return 0; fi
+  show_dns_records
+}
+
+# Download the latest release and run it: it updates the command, the seeder and the settings files,
+# and only restarts what changed.
+do_update() {
+  need_root
+  load_settings || fail "DigiNode Seeder isn't set up on this server. Set it up with: curl -sSL https://seedsetup.diginode.tools | sudo bash"
+  local tmp newver; tmp=$(mktemp /tmp/diginode-seeder.XXXXXX)
+  spin "Checking for a new version of DigiNode Seeder" curl -fsSL -m 60 "$RELEASES_URL/latest/download/diginode-seeder.sh" -o "$tmp" \
+    || fail "Couldn't download DigiNode Seeder from GitHub."
+  newver=$(sed -n 's/^DGNS_VERSION="\(.*\)"$/\1/p' "$tmp" | head -1)
+  [[ -n $newver ]] || fail "The download doesn't look like DigiNode Seeder."
+  if [[ $newver == "$DGNS_VERSION" ]]; then
+    ok "DigiNode Seeder $DGNS_VERSION is the latest version. Checking the seeders for updates."
+  elif [[ $(printf '%s\n%s\n' "$newver" "$DGNS_VERSION" | sort -V | tail -1) == "$DGNS_VERSION" ]]; then
+    rm -f "$tmp"
+    warn "You have DigiNode Seeder $DGNS_VERSION, newer than the latest release ($newver). Nothing changed."
+    say "To update the seeders with this version, run: sudo bash $INSTALL_DIR/bin/diginode-seeder --yes"
+    return 0
+  else
+    ok "New version: DigiNode Seeder $newver (you have $DGNS_VERSION)."
+  fi
+  exec bash "$tmp" --yes
 }
 
 do_uninstall() {
+  need_root
   load_settings || fail "DigiNode Seeder isn't set up on this server."
   confirm "Stop and remove all seeders? Their crawl data in $STATE_BASE is kept." n || exit 0
   local id
@@ -655,27 +962,36 @@ do_uninstall() {
     mv "$DNSDIST_CONF" "$DNSDIST_CONF.diginode-seeder.off"
   fi
   for f in "$CONF_DIR"/*.conf; do [[ -e $f ]] && mv "$f" "$f.off"; done
+  [[ -L $CMD_LINK ]] && rm -f "$CMD_LINK"
   ok "Seeders stopped and removed. Settings kept in $CONF_DIR, data in $STATE_BASE."
+  say "To set it up again: curl -sSL https://seedsetup.diginode.tools | sudo bash"
   say "Remember to remove the seed names' NS records at your DNS provider."
 }
 
 usage() {
   cat <<EOF
-DigiNode Seeder $DGNS_VERSION - run DNS seeders for DigiByte.
+DigiNode Seeder $DGNS_VERSION - run DNS seeders for DigiByte on your own server.
 
-  curl -sSL https://seedsetup.diginode.tools | sudo bash                 set up or update
-  curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --status   check status
+Usage: diginode-seeder [option]
 
-Options:
-  --status              Show whether the seeders are running and answering
-  --reconfigure         Ask the setup questions again
-  --uninstall           Stop and remove the seeders (keeps their data)
-  --mainnet <name>      Seed name for DigiByte mainnet (e.g. seed.example.com)
-  --testnet <name>      Seed name for DigiByte testnet (e.g. testnetseed.example.com)
-  --ns <name>           Nameserver name for this server (e.g. dnsseed.example.com)
-  --email <address>     Contact email for the seeds' DNS records
-  --yes                 Don't ask; accept the defaults
-  --help                Show this text
+  (no option)          Show how the seeders are doing, and how to get them into DigiByte Core
+  --dns                Check your DNS records, and explain anything that's wrong
+  --ai-prompt          A ready-made prompt for an AI agent to add your seed to DigiByte Core
+  --update             Update DigiNode Seeder and the seeders (keeps your settings)       [sudo]
+  --reconfigure        Change the seed names, nameserver, email or which seeders run    [sudo]
+  --uninstall          Stop and remove the seeders (keeps their data)                    [sudo]
+  --version            Show the version
+  --help               Show this text
+
+Set up without questions (e.g. for automation), with sudo:
+  --mainnet <name>     Seed name for DigiByte mainnet (e.g. seed.example.com)
+  --testnet <name>     Seed name for DigiByte testnet (e.g. testnetseed.example.com)
+  --ns <name>          Nameserver name for this server (e.g. dnsseed.example.com)
+  --email <address>    Contact email for the seeds' DNS records
+  --yes                Don't ask; accept the defaults
+
+First install:  curl -sSL https://seedsetup.diginode.tools | sudo bash
+Guide:          $GUIDE_URL
 EOF
 }
 
@@ -683,14 +999,22 @@ EOF
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  # Run as the installed diginode-seeder command: no option = status. Run from curl (or a file): no option = set up.
+  AS_COMMAND=0; [[ $(basename "$0") == diginode-seeder ]] && AS_COMMAND=1
+  ARGS_TEXT="$*"
   local cmd=setup
+  [[ $AS_COMMAND -eq 1 && $# -eq 0 ]] && cmd=status
   RECONFIGURE=0; CLI_SET=0
   declare -gA SEED_HOST=()
-  ENABLED=(); NS_HOST=""; SOA_EMAIL=""
+  ENABLED=(); NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""
   local cli_main="" cli_test="" cli_ns="" cli_email=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --status) cmd=status ;;
+      --dns) cmd=dns ;;
+      --ai-prompt) cmd=aiprompt ;;
+      --update) cmd=update ;;
+      --version|-v) echo "DigiNode Seeder $DGNS_VERSION"; exit 0 ;;
       --uninstall) cmd=uninstall ;;
       --reconfigure) RECONFIGURE=1 ;;
       --mainnet) cli_main="${2:-}"; shift ;;
@@ -705,6 +1029,9 @@ main() {
   done
   case "$cmd" in
     status) do_status; return ;;
+    dns) do_dns; return ;;
+    aiprompt) do_ai_prompt; return ;;
+    update) do_update; return ;;
     uninstall) do_uninstall; return ;;
   esac
   if [[ -n $cli_main$cli_test ]]; then
