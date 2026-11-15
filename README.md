@@ -49,13 +49,15 @@ diginode-seeder                    # how the seeders are doing, and how to get t
 diginode-seeder --dns              # check your DNS records, and explain anything that's wrong
 diginode-seeder --ai-prompt        # a ready-made prompt for an AI agent to add your seed to DigiByte Core
 diginode-seeder --motd on|off      # show (or stop showing) the DigiNode Seeder message when you log in
+diginode-seeder --auto-updates on|off  # install security updates automatically (on by default)
+diginode-seeder --auto-restart on|off  # restart at 03:30 when an update needs it (on by default)
 diginode-seeder --update           # update DigiNode Seeder and the seeders (keeps your settings)
 diginode-seeder --reconfigure      # change names or seeders
 diginode-seeder --uninstall        # stop and remove
 diginode-seeder --help             # all options
 ```
 
-The setup also offers a login message: each time you log in over SSH, it shows the DigiNode logo and the `diginode-seeder` command, so there's nothing to remember months later (and it says if a seeder has stopped). Updating, changing and removing need administrator rights: if you aren't logged in as root, the command asks for your password (sudo) by itself. Updating only restarts what changed. Running the setup command again also updates.
+The setup also turns on **automatic security updates** (Debian's or Ubuntu's own, with `unattended-upgrades`), restarting at 03:30 server time only when an update needs it; the seeders start again by themselves. You can say no to either. The setup also offers a login message: each time you log in over SSH, it shows the DigiNode logo and the `diginode-seeder` command, so there's nothing to remember months later (and it says if a seeder has stopped). Updating, changing and removing need administrator rights: if you aren't logged in as root, the command asks for your password (sudo) by itself. Updating only restarts what changed. Running the setup command again also updates.
 
 For automation, every answer can be given as an option:
 

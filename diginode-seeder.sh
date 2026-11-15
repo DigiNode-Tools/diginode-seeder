@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.3"
+DGNS_VERSION="0.2.4"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -31,6 +31,10 @@ DNSDIST_CONF="/etc/dnsdist/dnsdist.conf"
 DNSDIST_MARK="-- Written by DigiNode Seeder"
 CMD_LINK="/usr/local/bin/diginode-seeder"  # the diginode-seeder command
 MOTD_FILE="/etc/update-motd.d/50-diginode-seeder"   # the login message
+UPDATES_CONF="/etc/apt/apt.conf.d/52diginode-seeder-auto-updates"   # automatic updates: restarts, config files
+APT_PERIODIC_CONF="/etc/apt/apt.conf.d/20auto-upgrades"            # turns daily updates on or off
+DGNT_UPDATES_CONF="/etc/apt/apt.conf.d/52diginode-auto-updates"    # DigiNode Tools' own, if it's on this server
+RESTART_TIME="03:30"                                               # automatic restarts, server time
 RELEASES_URL="https://github.com/DigiNode-Tools/diginode-seeder/releases"
 GUIDE_URL="https://diginode.tools/diginode-seeder/"
 
@@ -259,7 +263,7 @@ check_port53() {
 # Settings
 # ---------------------------------------------------------------------------
 load_settings() {
-  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; ENABLED=()
+  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; AUTO_UPDATES=""; AUTO_RESTART=""; ENABLED=()
   declare -gA SEED_HOST=()
   [[ -r $CONF_DIR/settings ]] || return 1
   # shellcheck disable=SC1091
@@ -283,6 +287,8 @@ NS_HOST="$NS_HOST"
 SOA_EMAIL="$SOA_EMAIL"
 SETUP_DATE="${SETUP_DATE:-$(date -u +%F)}"
 MOTD="${MOTD:-yes}"
+AUTO_UPDATES="${AUTO_UPDATES:-yes}"
+AUTO_RESTART="${AUTO_RESTART:-yes}"
 EOF
 }
 
@@ -291,6 +297,8 @@ keep_saved_extras() {
   [[ -r $CONF_DIR/settings ]] || return 0
   [[ -n $SETUP_DATE ]] || SETUP_DATE=$(sed -n 's/^SETUP_DATE="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $MOTD ]] || MOTD=$(sed -n 's/^MOTD="\(.*\)"$/\1/p' "$CONF_DIR/settings")
+  [[ -n $AUTO_UPDATES ]] || AUTO_UPDATES=$(sed -n 's/^AUTO_UPDATES="\(.*\)"$/\1/p' "$CONF_DIR/settings")
+  [[ -n $AUTO_RESTART ]] || AUTO_RESTART=$(sed -n 's/^AUTO_RESTART="\(.*\)"$/\1/p' "$CONF_DIR/settings")
 }
 
 save_settings() {
@@ -374,6 +382,19 @@ ask_settings() {
   done
   SOA_EMAIL="$REPLY"
   ask_motd
+  ask_updates
+}
+
+ask_updates() {
+  title "System updates"
+  say "A seeder is a small public server that's easy to forget about, so it's safest when it"
+  say "installs security updates by itself."
+  local def=y; [[ $AUTO_UPDATES == no ]] && def=n
+  if confirm "Install security updates automatically?" "$def"; then AUTO_UPDATES=yes; else AUTO_UPDATES=no; AUTO_RESTART=no; return; fi
+  say "Some updates (such as a new Linux kernel) only take effect after a restart. The seeders"
+  say "start again by themselves, so it's only down for a minute or so."
+  def=y; [[ $AUTO_RESTART == no ]] && def=n
+  if confirm "Restart automatically when an update needs it (at $RESTART_TIME server time)?" "$def"; then AUTO_RESTART=yes; else AUTO_RESTART=no; fi
 }
 
 ask_motd() {
@@ -393,6 +414,10 @@ show_summary() {
   printf '  %-36s %s\n' "Nameserver (this server)" "$NS_HOST"
   printf '  %-36s %s\n' "Contact email" "$SOA_EMAIL"
   printf '  %-36s %s\n' "Login message" "${MOTD:-yes}"
+  local upd="no"
+  [[ ${AUTO_UPDATES:-yes} == yes ]] && upd="yes, restarting at $RESTART_TIME when needed"
+  [[ ${AUTO_UPDATES:-yes} == yes && ${AUTO_RESTART:-yes} == no ]] && upd="yes, without automatic restarts"
+  printf '  %-36s %s\n' "Automatic security updates" "$upd"
   printf '  %-36s %s\n' "Server address" "${PUBLIC_V4:-none}${LOCAL_V6:+, $LOCAL_V6}"
 }
 
@@ -572,6 +597,13 @@ done
 if [ -n "$stopped" ]; then
   printf '\n     %s[!] Not running:%s%s - check with: %sdiginode-seeder%s\n' "$y" "$stopped" "$r" "$b" "$r"
 fi
+if [ -f /var/run/reboot-required ]; then
+  if grep -qs '^Unattended-Upgrade::Automatic-Reboot "true"' /etc/apt/apt.conf.d/52diginode-seeder-auto-updates; then
+    printf '\n     A restart is needed to finish installing updates. It will restart at %s.\n' "$(sed -n 's/^Unattended-Upgrade::Automatic-Reboot-Time "\(.*\)";/\1/p' /etc/apt/apt.conf.d/52diginode-seeder-auto-updates)"
+  else
+    printf '\n     %s[!] A restart is needed to finish installing updates:%s %ssudo reboot%s\n' "$y" "$r" "$b" "$r"
+  fi
+fi
 echo
 EOF
   } > "$MOTD_FILE.new"
@@ -590,6 +622,68 @@ remove_motd() {
     mv /etc/motd.before-diginode-seeder /etc/motd
   fi
   ok "Login message off"
+}
+
+# Automatic security updates, with unattended-upgrades: the system's own choice of updates (its security updates),
+# changed config files kept instead of asking (DigiNode Seeder changes dnsdist's, so without this dnsdist would
+# never be updated), and a restart at RESTART_TIME when an update needs one.
+apply_updates() {
+  if [[ -f $DGNT_UPDATES_CONF ]]; then
+    info "System updates are managed by DigiNode Tools on this server (diginode-setup > System)."
+    return 0
+  fi
+  if [[ ${AUTO_UPDATES:-yes} == no ]]; then
+    if [[ -f $UPDATES_CONF ]]; then
+      rm -f "$UPDATES_CONF"
+      printf '%s\n' 'APT::Periodic::Update-Package-Lists "1";' 'APT::Periodic::Unattended-Upgrade "0";' > "$APT_PERIODIC_CONF"
+      ok "Automatic security updates off"
+    fi
+    return 0
+  fi
+  if ! dpkg -s unattended-upgrades >/dev/null 2>&1; then
+    spin "Installing unattended-upgrades" apt-get install -y -qq unattended-upgrades \
+      || { warn "Couldn't install unattended-upgrades, so updates aren't automatic."; return 0; }
+  fi
+  printf '%s\n' 'APT::Periodic::Update-Package-Lists "1";' 'APT::Periodic::Unattended-Upgrade "1";' > "$APT_PERIODIC_CONF"
+  local restart=false; [[ ${AUTO_RESTART:-yes} == yes ]] && restart=true
+  cat > "$UPDATES_CONF.new" <<EOF
+// Automatic security updates - written by DigiNode Seeder. Changes here are overwritten.
+// Change them with: diginode-seeder --auto-updates on|off   or   diginode-seeder --auto-restart on|off
+Unattended-Upgrade::Automatic-Reboot "$restart";
+Unattended-Upgrade::Automatic-Reboot-Time "$RESTART_TIME";
+Dpkg::Options {
+        "--force-confdef";
+        "--force-confold";
+};
+EOF
+  mv -f "$UPDATES_CONF.new" "$UPDATES_CONF"
+  # A mistake in an apt config file would break apt, so check it can be read.
+  if ! apt-config dump >/dev/null 2>&1; then
+    rm -f "$UPDATES_CONF"; warn "Couldn't set up automatic restarts; the system's own update settings are used."
+    return 0
+  fi
+  if [[ $restart == true ]]; then ok "Automatic security updates on (restarting at $RESTART_TIME when an update needs it)"
+  else ok "Automatic security updates on (no automatic restarts)"; fi
+}
+
+# For the status: a line about updates, and one if a restart is needed.
+updates_status() {
+  if [[ -f $DGNT_UPDATES_CONF ]]; then
+    printf '  %b %s\n' "${GRN}✓${R}" "Automatic system updates: managed by DigiNode Tools"
+  elif [[ ${AUTO_UPDATES:-} == yes && -f $UPDATES_CONF ]]; then
+    local last; last=$(systemctl show -p LastTriggerUSec --value apt-daily-upgrade.timer 2>/dev/null || true)
+    if [[ -z $last || $last == n/a ]]; then last="not yet"; else last=$(date -d "$last" '+%-d %b %H:%M' 2>/dev/null || echo "$last"); fi
+    printf '  %b %s\n' "${GRN}✓${R}" "Automatic security updates: on (last run: $last)"
+  else
+    printf '  %b %s\n' "${YLW}!${R}" "Automatic security updates: off (turn on: diginode-seeder --auto-updates on)"
+  fi
+  if [[ -f /var/run/reboot-required ]]; then
+    if [[ ${AUTO_RESTART:-} == yes && -f $UPDATES_CONF ]]; then
+      printf '  %b %s\n' "${CYN}i${R}" "A restart is needed to finish installing updates. It will restart at $RESTART_TIME."
+    else
+      printf '  %b %s\n' "${YLW}!${R}" "A restart is needed to finish installing updates. Restart with: sudo reboot"
+    fi
+  fi
 }
 
 write_dnsdist() {
@@ -847,10 +941,13 @@ do_setup() {
   if [[ ${#ENABLED[@]} -eq 0 || $RECONFIGURE -eq 1 ]]; then
     [[ $CLI_SET -eq 1 ]] || ask_settings
   fi
-  [[ -n $CLI_MOTD ]] && MOTD="$CLI_MOTD"
-  # Set up before the login message existed: ask once (or turn it on, with --yes).
+  apply_cli_choices
+  # Set up before these choices existed: ask once (or turn them on, with --yes).
   if [[ -z $MOTD ]]; then
     if [[ $ASSUME_YES -eq 0 ]] && has_tty; then ask_motd; else MOTD=yes; fi
+  fi
+  if [[ -z $AUTO_UPDATES ]]; then
+    if [[ $ASSUME_YES -eq 0 ]] && has_tty; then ask_updates; else AUTO_UPDATES=yes; AUTO_RESTART=${AUTO_RESTART:-yes}; fi
   fi
   [[ ${#ENABLED[@]} -gt 0 && -n $NS_HOST && -n $SOA_EMAIL ]] || fail "Settings are incomplete."
   show_summary
@@ -862,6 +959,7 @@ do_setup() {
   install_service
   install_command
   apply_motd
+  apply_updates
   save_settings
   write_dnsdist
   open_firewall
@@ -913,6 +1011,8 @@ do_status() {
   title "From the internet (DNS records and public DNS)"
   local dns_ok=0
   check_dns && dns_ok=1
+  title "System"
+  updates_status
   show_core_status "$dns_ok"
   say ""
   say "${DIM}Logs: journalctl -u diginode-seeder@${ENABLED[0]}    Commands: diginode-seeder --help${R}"
@@ -1085,7 +1185,9 @@ Usage: diginode-seeder [option]
   (no option)          Show how the seeders are doing, and how to get them into DigiByte Core
   --dns                Check your DNS records, and explain anything that's wrong
   --ai-prompt          A ready-made prompt for an AI agent to add your seed to DigiByte Core
-  --motd on|off        Show (or stop showing) the DigiNode Seeder message when you log in
+  --motd on|off         Show (or stop showing) the DigiNode Seeder message when you log in
+  --auto-updates on|off Install security updates automatically (on by default)
+  --auto-restart on|off Restart at 03:30 when an update needs it (on by default)
   --update             Update DigiNode Seeder and the seeders (keeps your settings)
   --reconfigure        Change the seed names, nameserver, email or which seeders run
   --uninstall          Stop and remove the seeders (keeps their data)
@@ -1110,6 +1212,25 @@ EOF
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+on_off() { # on_off <option> <value> -> ONOFF=yes|no
+  case "$2" in
+    on|yes) ONOFF=yes ;; off|no) ONOFF=no ;;
+    *) fail "Use $1 on or $1 off." ;;
+  esac
+}
+
+# Choices given as options win over saved ones. Turning automatic updates off also turns restarts off.
+apply_cli_choices() {
+  [[ -n $CLI_MOTD ]] && MOTD="$CLI_MOTD"
+  # Turning updates back on brings back automatic restarts too (the default), unless --auto-restart says otherwise.
+  if [[ $CLI_UPDATES == yes && $AUTO_UPDATES == no && -z $CLI_RESTART ]]; then AUTO_RESTART=yes; fi
+  [[ -n $CLI_UPDATES ]] && AUTO_UPDATES="$CLI_UPDATES"
+  [[ -n $CLI_RESTART ]] && AUTO_RESTART="$CLI_RESTART"
+  if [[ $AUTO_RESTART == yes && $AUTO_UPDATES == no ]]; then AUTO_RESTART=no; fi
+  if [[ $AUTO_UPDATES == yes && -z $AUTO_RESTART ]]; then AUTO_RESTART=yes; fi
+  return 0
+}
+
 main() {
   # Run as the installed diginode-seeder command: no option = status. Run from curl (or a file): no option = set up.
   AS_COMMAND=0; [[ $(basename "$0") == diginode-seeder ]] && AS_COMMAND=1
@@ -1119,6 +1240,7 @@ main() {
   RECONFIGURE=0; CLI_SET=0
   declare -gA SEED_HOST=()
   ENABLED=(); NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; CLI_MOTD=""
+  AUTO_UPDATES=""; AUTO_RESTART=""; CLI_UPDATES=""; CLI_RESTART=""
   local cli_main="" cli_test="" cli_ns="" cli_email=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1133,12 +1255,9 @@ main() {
       --testnet) cli_test="${2:-}"; shift ;;
       --ns) cli_ns="${2:-}"; shift ;;
       --email) cli_email="${2:-}"; shift ;;
-      --motd)
-        case "${2:-}" in
-          on|yes) CLI_MOTD=yes ;; off|no) CLI_MOTD=no ;;
-          *) fail "Use --motd on or --motd off." ;;
-        esac
-        shift ;;
+      --motd) on_off "$1" "${2:-}"; CLI_MOTD=$ONOFF; shift ;;
+      --auto-updates) on_off "$1" "${2:-}"; CLI_UPDATES=$ONOFF; shift ;;
+      --auto-restart) on_off "$1" "${2:-}"; CLI_RESTART=$ONOFF; shift ;;
       --yes|-y) ASSUME_YES=1 ;;
       --help|-h) usage; exit 0 ;;
       *) usage; fail "Unknown option: $1" ;;
@@ -1152,13 +1271,14 @@ main() {
     update) do_update; return ;;
     uninstall) do_uninstall; return ;;
   esac
-  # Just --motd on|off, on a server that's set up: change only that.
-  if [[ -n $CLI_MOTD && -z $cli_main$cli_test && $RECONFIGURE -eq 0 && -r $CONF_DIR/settings ]]; then
+  # Just --motd / --auto-updates / --auto-restart, on a server that's set up: change only those.
+  if [[ -n $CLI_MOTD$CLI_UPDATES$CLI_RESTART && -z $cli_main$cli_test && $RECONFIGURE -eq 0 && -r $CONF_DIR/settings ]]; then
     need_root
     load_settings
-    MOTD="$CLI_MOTD"
+    apply_cli_choices
     write_settings_file
-    apply_motd
+    if [[ -n $CLI_MOTD ]]; then apply_motd; fi
+    if [[ -n $CLI_UPDATES$CLI_RESTART ]]; then apply_updates; fi
     return
   fi
   if [[ -n $cli_main$cli_test ]]; then
@@ -1169,7 +1289,7 @@ main() {
     valid_hostname "$cli_ns" || fail "Invalid --ns name."
     email_to_mbox "$cli_email" >/dev/null || fail "Invalid --email (no dot allowed before the @)."
     NS_HOST="${cli_ns,,}"; SOA_EMAIL="$cli_email"; CLI_SET=1
-    MOTD="$CLI_MOTD"
+    apply_cli_choices
     keep_saved_extras
   fi
   do_setup
