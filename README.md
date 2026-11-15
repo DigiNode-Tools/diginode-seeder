@@ -25,36 +25,36 @@ curl -sSL https://seedsetup.diginode.tools | sudo bash
 
 It asks which seeders to run and what to call them:
 
-- **Seed names**, such as `seed.example.com` (mainnet) and `testnetseed.example.com` (testnet).
-- **A nameserver name** for the server, such as `dnsseed.example.com`.
+- **Seed names**, such as `dgbseed.example.com` (mainnet) and `dgbtestnetseed.example.com` (testnet).
+- **A name for the server**, such as `seedserver.example.com`.
 - **A contact email**, shown in the seeds' DNS records.
 
 Then it builds the seeder, starts everything, waits until the seeders find nodes, and shows the DNS records to add. Add them, press Enter, and it checks them for you, saying what's wrong if anything is:
 
 ```
-dnsseed.example.com       A     203.0.113.10
-dnsseed.example.com       AAAA  2001:db8::10        (if the server has IPv6)
-seed.example.com          NS    dnsseed.example.com
-testnetseed.example.com   NS    dnsseed.example.com
+seedserver.example.com      A     203.0.113.10
+seedserver.example.com      AAAA  2001:db8::10     (if the server has IPv6)
+dgbseed.example.com         NS    seedserver.example.com
+dgbtestnetseed.example.com  NS    seedserver.example.com
 ```
 
-On Cloudflare, set the nameserver's records to **DNS only** (grey cloud). Once the records are live, `dig seed.example.com` should return a list of node addresses.
+On Cloudflare, set the server's records (`seedserver`) to **DNS only** (grey cloud). Once the records are live, `dig dgbseed.example.com` should return a list of node addresses.
 
 ## After setup: the `diginode-seeder` command
 
 The setup installs a `diginode-seeder` command on the server:
 
 ```bash
-diginode-seeder                    # how the seeders are doing, and how to get them into DigiByte Core
-diginode-seeder --dns              # check your DNS records, and explain anything that's wrong
-diginode-seeder --ai-prompt        # a ready-made prompt for an AI agent to add your seed to DigiByte Core
-diginode-seeder --motd on|off      # show (or stop showing) the DigiNode Seeder message when you log in
+diginode-seeder                        # how the seeders are doing, and how to get them into DigiByte Core
+diginode-seeder --dns                  # check your DNS records, and explain anything that's wrong
+diginode-seeder --ai-prompt            # a ready-made prompt for an AI agent to add your seed to DigiByte Core
+diginode-seeder --motd on|off          # show (or stop showing) the message when you log in
 diginode-seeder --auto-updates on|off  # install security updates automatically (on by default)
 diginode-seeder --auto-restart on|off  # restart at 03:30 when an update needs it (on by default)
-diginode-seeder --update           # update DigiNode Seeder and the seeders (keeps your settings)
-diginode-seeder --reconfigure      # change names or seeders
-diginode-seeder --uninstall        # stop and remove
-diginode-seeder --help             # all options
+diginode-seeder --update               # update DigiNode Seeder and the seeders (keeps your settings)
+diginode-seeder --reconfigure          # change names or seeders
+diginode-seeder --uninstall            # stop and remove
+diginode-seeder --help                 # all options
 ```
 
 The setup also turns on **automatic security updates** (Debian's or Ubuntu's own, with `unattended-upgrades`), restarting at 03:30 server time only when an update needs it; the seeders start again by themselves. You can say no to either. The setup also offers a login message: each time you log in over SSH, it shows the DigiNode logo and the `diginode-seeder` command, so there's nothing to remember months later (and it says if a seeder has stopped). Updating, changing and removing need administrator rights: if you aren't logged in as root, the command asks for your password (sudo) by itself. Updating only restarts what changed. Running the setup command again also updates.
@@ -63,23 +63,24 @@ For automation, every answer can be given as an option:
 
 ```bash
 curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --yes \
-  --mainnet seed.example.com --testnet testnetseed.example.com \
-  --ns dnsseed.example.com --email you@example.com
+  --mainnet dgbseed.example.com --testnet dgbtestnetseed.example.com \
+  --ns seedserver.example.com --email you@example.com
 ```
 
 ## How it works
 
 ```
-                        port 53                      local only
-Internet ──DNS──▶  dnsdist ──seed.example.com────────▶ mainnet seeder (127.0.0.1:5301)
-                     │    └─testnetseed.example.com──▶ testnet seeder (127.0.0.1:5302)
+                        port 53                          local only
+Internet ──DNS──▶  dnsdist ──dgbseed.example.com─────────▶ mainnet seeder (127.0.0.1:5301)
+                     │    └─dgbtestnetseed.example.com───▶ testnet seeder (127.0.0.1:5302)
                      └── any other name: refused
 ```
 
 - **One IP, several seeders.** Each seeder needs to answer DNS on port 53, and only one program can use a port. [dnsdist](https://dnsdist.org) answers on port 53 and passes each seed name to its own seeder. Everything else is refused, so the server can't be used as an open DNS server, and each address is rate-limited. Seeders only answer over UDP (their answers always fit), so questions over TCP are refused.
 - **The seeder** is [DigiNode-Tools/digibyte-seeder](https://github.com/DigiNode-Tools/digibyte-seeder), DigiByte's seeder with DigiByte Core v9 testnet support and options for future network changes. It's built from source on your server.
 - **Each seeder is a locked-down systemd service** (`diginode-seeder@digibyte-mainnet`, `diginode-seeder@digibyte-testnet`) running as its own user. It starts at boot and restarts if it stops. Its crawl data stays between restarts.
-- Seeders answer both plain (`seed.example.com`) and filtered (`x9.seed.example.com`) queries. DigiByte Core asks for the filtered form first.
+- **Other blockchains later.** Everything chain-specific is in tables at the top of the script, so seeders for other chains (for example NITO or Bitcoin) can be added later and run on the same server, each with its own name: `dgbseed`, `dgbtestnetseed`, `nitoseed`... all handed to `seedserver`.
+- Seeders answer both plain (`dgbseed.example.com`) and filtered (`x9.dgbseed.example.com`) queries. DigiByte Core asks for the filtered form first.
 
 | Where | What |
 |---|---|
@@ -101,8 +102,8 @@ The network only needs a handful of seeders, so it's best if each person runs no
 - **Let it run for a couple of weeks** and check now and then that it's still answering. The developers want seeds that stay up.
 - **Check it from the internet**, from any computer:
   ```bash
-  dig +short seed.example.com        # a list of node addresses
-  dig +short x9.seed.example.com     # the same, for the filtered form nodes ask first
+  dig +short dgbseed.example.com        # a list of node addresses
+  dig +short x9.dgbseed.example.com     # the same, for the filtered form nodes ask first
   ```
   On the server, `diginode-seeder` shows the same, and once your seed works it shows the exact line to add.
 - **Have a GitHub account.** The line you add includes your name and GitHub handle, so the developers can reach you if your seeder ever has a problem.
@@ -118,12 +119,12 @@ No need to install anything:
    - for **testnet**, the list under `// DigiByte TESTNET DNS Seed Servers:`
 
    ```cpp
-   vSeeds.emplace_back("seed.example.com"); // Your Name @your-github-handle
+   vSeeds.emplace_back("dgbseed.example.com"); // Your Name @your-github-handle
    ```
    Copy the lines above it exactly, with the same spacing and a semicolon at the end. Change nothing else.
-4. Click **Commit changes…**. As the commit message, write something like `net: Add seed.example.com DNS seed`. DigiByte's rules say commit messages must not contain `@` mentions, so leave your handle out of it: it's only in the line of code. Choose **Create a new branch for this commit and start a pull request**, then **Propose changes**.
-5. Check that the pull request goes **into `DigiByte-Core/digibyte`, branch `develop`**. Give it a title starting with `net:`, such as `net: Add seed.example.com DNS seed`, and a short description, for example:
-   > Adds seed.example.com as a mainnet DNS seed, run by Your Name. It has been running since 1 March on its own server (set up with DigiNode Seeder) and returns about 25 nodes, for both plain and x9. queries. I'll keep it running, and I'm happy to be contacted if it ever has a problem.
+4. Click **Commit changes…**. As the commit message, write something like `net: Add dgbseed.example.com DNS seed`. DigiByte's rules say commit messages must not contain `@` mentions, so leave your handle out of it: it's only in the line of code. Choose **Create a new branch for this commit and start a pull request**, then **Propose changes**.
+5. Check that the pull request goes **into `DigiByte-Core/digibyte`, branch `develop`**. Give it a title starting with `net:`, such as `net: Add dgbseed.example.com DNS seed`, and a short description, for example:
+   > Adds dgbseed.example.com as a mainnet DNS seed, run by Your Name. It has been running since 1 March on its own server (set up with DigiNode Seeder) and returns about 25 nodes, for both plain and x9. queries. I'll keep it running, and I'm happy to be contacted if it ever has a problem.
 6. Click **Create pull request** and follow any comments from the reviewers.
 
 Running both seeders? Add both lines in the same pull request.
@@ -134,8 +135,8 @@ For anyone comfortable with `git`. You need [`gh`](https://cli.github.com) signe
 
 ```bash
 # 1. Check your seed(s) answer from the internet
-dig +short seed.example.com
-dig +short x9.seed.example.com
+dig +short dgbseed.example.com
+dig +short x9.dgbseed.example.com
 
 # 2. Fork DigiByte Core and clone just the develop branch
 gh repo fork DigiByte-Core/digibyte --clone=false
@@ -147,19 +148,19 @@ git fetch upstream develop
 git switch -c add-seed-example upstream/develop
 
 # 3. Add your line at the end of the mainnet (or testnet) list, matching the lines above it
-#      vSeeds.emplace_back("seed.example.com"); // Your Name @your-github-handle
+#      vSeeds.emplace_back("dgbseed.example.com"); // Your Name @your-github-handle
 grep -n 'vSeeds.emplace_back' src/kernel/chainparams.cpp     # find the lists
 nano src/kernel/chainparams.cpp
 git diff                                                      # one added line per seed, nothing else
 
 # 4. Commit (no @ mentions in the message) and push to your fork
-git commit -am "net: Add seed.example.com DNS seed"
+git commit -am "net: Add dgbseed.example.com DNS seed"
 git push -u origin add-seed-example
 
 # 5. Open the pull request against develop
 gh pr create --repo DigiByte-Core/digibyte --base develop \
-  --title "net: Add seed.example.com DNS seed" \
-  --body "Adds seed.example.com as a mainnet DNS seed, run by Your Name. Running since 1 March on its own server (set up with DigiNode Seeder); returns about 25 nodes for both plain and x9. queries. Happy to be contacted if it ever has a problem."
+  --title "net: Add dgbseed.example.com DNS seed" \
+  --body "Adds dgbseed.example.com as a mainnet DNS seed, run by Your Name. Running since 1 March on its own server (set up with DigiNode Seeder); returns about 25 nodes for both plain and x9. queries. Happy to be contacted if it ever has a problem."
 ```
 
 ### Or let an AI agent do it
@@ -170,8 +171,8 @@ If you use an AI coding agent that can run commands and use GitHub (for example 
 I run a DigiByte DNS seeder and want it added to DigiByte Core. Please prepare a pull request.
 
 My details:
-- Mainnet seed name: seed.example.com   (leave blank if none)
-- Testnet seed name: testnetseed.example.com   (leave blank if none)
+- Mainnet seed name: dgbseed.example.com   (leave blank if none)
+- Testnet seed name: dgbtestnetseed.example.com   (leave blank if none)
 - My name as it should appear: Your Name
 - My GitHub handle: your-github-handle
 - Running since: 1 March 2027

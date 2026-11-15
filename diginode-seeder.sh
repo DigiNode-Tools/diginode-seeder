@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.4"
+DGNS_VERSION="0.2.5"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -70,10 +70,13 @@ declare -A NET_P2P_PORT=(                   # for information only
   [digibyte-mainnet]=12024
   [digibyte-testnet]=12033
 )
-declare -A NET_SEED_PREFIX=(                # suggested seed name
-  [digibyte-mainnet]="seed"
-  [digibyte-testnet]="testnetseed"
+# Suggested seed names start with the chain, so seeders for other chains can share the server later
+# (dgbseed, dgbtestnetseed, nitoseed...). The server's own name is always SERVER_PREFIX.<domain>.
+declare -A NET_SEED_PREFIX=(
+  [digibyte-mainnet]="dgbseed"
+  [digibyte-testnet]="dgbtestnetseed"
 )
+SERVER_PREFIX="seedserver"
 # Where the chain's node software lists its seeds, for the "add it to DigiByte Core" step.
 declare -A CHAIN_CORE_NAME=([digibyte]="DigiByte Core")
 declare -A CHAIN_CORE_FILE=([digibyte]="src/kernel/chainparams.cpp")
@@ -331,7 +334,7 @@ EOF
 ask_settings() {
   local id chain net def
   title "Which seeders?"
-  say "Each seeder needs its own name (e.g. seed.example.com). One server can run them all."
+  say "Each seeder needs its own name (e.g. dgbseed.example.com). One server can run them all."
   local new_enabled=()
   for chain in "${CHAINS[@]}"; do
     for net in ${CHAIN_NETWORKS[$chain]}; do
@@ -361,16 +364,16 @@ ask_settings() {
     SEED_HOST[$id]="${REPLY,,}"
   done
   say ""
-  say "The nameserver name points at this server. The seed names are handed to it."
+  say "The server's own name points at this server, and the seed names are handed to it."
   while :; do
-    ask "Nameserver name for this server" "${NS_HOST:-dnsseed.$domain_guess}"
+    ask "Name for this server" "${NS_HOST:-$SERVER_PREFIX.$domain_guess}"
     if ! valid_hostname "$REPLY"; then warn "That isn't a valid name."; continue; fi
     local clash=""
     for id in "${ENABLED[@]}"; do
       [[ ${REPLY,,} == "${SEED_HOST[$id]}" || ${REPLY,,} == *".${SEED_HOST[$id]}" ]] && clash="${SEED_HOST[$id]}"
     done
     [[ -z $clash ]] && break
-    warn "The nameserver name can't be $clash or inside it. Use a different name, e.g. dnsseed.$domain_guess."
+    warn "The nameserver name can't be $clash or inside it. Use a different name, e.g. $SERVER_PREFIX.$domain_guess."
   done
   NS_HOST="${REPLY,,}"
   while :; do
@@ -1195,9 +1198,9 @@ Usage: diginode-seeder [option]
   --help               Show this text
 
 Set up without questions (e.g. for automation):
-  --mainnet <name>     Seed name for DigiByte mainnet (e.g. seed.example.com)
-  --testnet <name>     Seed name for DigiByte testnet (e.g. testnetseed.example.com)
-  --ns <name>          Nameserver name for this server (e.g. dnsseed.example.com)
+  --mainnet <name>     Seed name for DigiByte mainnet (e.g. dgbseed.example.com)
+  --testnet <name>     Seed name for DigiByte testnet (e.g. dgbtestnetseed.example.com)
+  --ns <name>          Name for this server, the seeds' nameserver (e.g. seedserver.example.com)
   --email <address>    Contact email for the seeds' DNS records
   --yes                Don't ask; accept the defaults
 
