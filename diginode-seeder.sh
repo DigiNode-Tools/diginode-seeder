@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.7"
+DGNS_VERSION="0.2.8"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -1075,9 +1075,12 @@ do_ai_prompt() {
   [[ ${#todo[@]} -gt 0 ]] || return 0
 
   title "A prompt for an AI agent"
-  say "An AI agent that can run commands and use GitHub (for example Claude Code, with the"
-  say "GitHub CLI 'gh' signed in) can make the pull request for you. It checks your seeder,"
-  say "prepares everything, and shows it to you before anything is published."
+  say "An AI agent that can run commands (for example Claude Code) can make the pull request"
+  say "for you. It checks your seeder, prepares everything, and shows it to you before anything"
+  say "is published. Use it on your own computer, not on this server."
+  say ""
+  say "${B}You need a GitHub account${R} (free: https://github.com/signup). That's all: no SSH key and"
+  say "no commit signing. The agent signs you in to GitHub through your web browser."
   say ""
   name="Your Name"; handle="your-github-handle"
   if [[ $ASSUME_YES -eq 0 ]] && has_tty; then
@@ -1109,8 +1112,11 @@ Steps:
 1. Check each seed name answers from the internet: \`dig +short <name>\` and
    \`dig +short x9.<name>\` (or nslookup, on Windows) should each return several
    IP addresses. Stop and tell me if any returns nothing.
-2. Check I'm signed in to GitHub with \`gh auth status\`. If not, help me sign in
-   (\`gh auth login\`), or install the GitHub CLI first if it's missing.
+2. Check I'm signed in to GitHub with the GitHub CLI: \`gh auth status\`. If the
+   GitHub CLI is missing, help me install it. If I'm not signed in, help me run
+   \`gh auth login\` and choose GitHub.com, HTTPS, and "Login with a web browser",
+   so no SSH key is needed. If I don't have a GitHub account, stop and tell me to
+   create one at https://github.com/signup first. Commit signing isn't required.
 3. Fork DigiByte-Core/digibyte with \`gh\` (if I don't already have a fork) and
    create a branch from the latest \`develop\` branch.
 4. In ${CHAIN_CORE_FILE[$chain]}, add these lines, each at the end of its list

@@ -106,7 +106,7 @@ The network only needs a handful of seeders, so it's best if each person runs no
   dig +short x9.dgbseed.example.com     # the same, for the filtered form nodes ask first
   ```
   On the server, `diginode-seeder` shows the same, and once your seed works it shows the exact line to add.
-- **Have a GitHub account.** The line you add includes your name and GitHub handle, so the developers can reach you if your seeder ever has a problem.
+- **Have a GitHub account.** The line you add includes your name and GitHub handle, so the developers can reach you if your seeder ever has a problem. You don't need an SSH key or commit signing: DigiByte Core accepts unsigned commits, and GitHub's website and the GitHub CLI's browser sign-in both work without an SSH key.
 
 ### Make the pull request on GitHub's website
 
