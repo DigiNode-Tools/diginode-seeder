@@ -48,13 +48,13 @@ The setup installs a `diginode-seeder` command on the server:
 diginode-seeder                    # how the seeders are doing, and how to get them into DigiByte Core
 diginode-seeder --dns              # check your DNS records, and explain anything that's wrong
 diginode-seeder --ai-prompt        # a ready-made prompt for an AI agent to add your seed to DigiByte Core
-sudo diginode-seeder --update      # update DigiNode Seeder and the seeders (keeps your settings)
-sudo diginode-seeder --reconfigure # change names or seeders
-sudo diginode-seeder --uninstall   # stop and remove
+diginode-seeder --update           # update DigiNode Seeder and the seeders (keeps your settings)
+diginode-seeder --reconfigure      # change names or seeders
+diginode-seeder --uninstall        # stop and remove
 diginode-seeder --help             # all options
 ```
 
-Updating only restarts what changed. Running the setup command again also updates.
+Updating, changing and removing need administrator rights: if you aren't logged in as root, the command asks for your password (sudo) by itself. Updating only restarts what changed. Running the setup command again also updates.
 
 For automation, every answer can be given as an option:
 

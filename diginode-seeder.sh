@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.1"
+DGNS_VERSION="0.2.2"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -117,9 +117,9 @@ spin() { # spin "Message" command [args...]
 }
 
 # The command to show users: the installed one, or the curl one if it isn't installed.
-cmd_hint() { # cmd_hint [--option] [sudo]
+cmd_hint() { # cmd_hint [--option]
   if [[ -x $CMD_LINK ]]; then
-    printf '%s%s%s' "${2:+sudo }" "diginode-seeder" "${1:+ $1}"
+    printf '%s%s' "diginode-seeder" "${1:+ $1}"
   else
     printf 'curl -sSL https://seedsetup.diginode.tools | sudo bash%s' "${1:+ -s -- $1}"
   fi
@@ -169,7 +169,10 @@ email_to_mbox() {
 
 need_root() {
   [[ $EUID -eq 0 ]] && return 0
-  if [[ $AS_COMMAND -eq 1 ]]; then fail "Please run it with sudo: sudo diginode-seeder${ARGS_TEXT:+ $ARGS_TEXT}"
+  if [[ $AS_COMMAND -eq 1 ]]; then
+    # The installed command asks for administrator rights itself, so users never need to type sudo.
+    command -v sudo >/dev/null || fail "This needs administrator rights. Log in as root and run it again."
+    exec sudo "$0" "${ORIG_ARGS[@]}"
   else fail "Please run as root, for example: curl -sSL https://seedsetup.diginode.tools | sudo bash"; fi
 }
 
@@ -775,7 +778,7 @@ do_setup() {
     say "  - Add the DNS records above, then check them:   ${B}$(cmd_hint --dns)${R}"
   fi
   say "  - See how it's doing, now and then:              ${B}$(cmd_hint)${R}"
-  say "  - Update it (keeps your settings):               ${B}$(cmd_hint --update sudo)${R}"
+  say "  - Update it (keeps your settings):               ${B}$(cmd_hint --update)${R}"
   say "  - After a couple of weeks, ask for your seed to be added to ${CHAIN_CORE_NAME[${ENABLED[0]%%-*}]},"
   say "    so nodes start using it. ${B}$(cmd_hint)${R} shows the line to add, and the guide shows how:"
   say "    ${GUIDE_URL}#add-to-digibyte-core"
@@ -943,7 +946,7 @@ do_update() {
   elif [[ $(printf '%s\n%s\n' "$newver" "$DGNS_VERSION" | sort -V | tail -1) == "$DGNS_VERSION" ]]; then
     rm -f "$tmp"
     warn "You have DigiNode Seeder $DGNS_VERSION, newer than the latest release ($newver). Nothing changed."
-    say "To update the seeders with this version, run: sudo bash $INSTALL_DIR/bin/diginode-seeder --yes"
+    say "To update the seeders with this version, run: diginode-seeder --yes"
     return 0
   else
     ok "New version: DigiNode Seeder $newver (you have $DGNS_VERSION)."
@@ -978,18 +981,21 @@ Usage: diginode-seeder [option]
   (no option)          Show how the seeders are doing, and how to get them into DigiByte Core
   --dns                Check your DNS records, and explain anything that's wrong
   --ai-prompt          A ready-made prompt for an AI agent to add your seed to DigiByte Core
-  --update             Update DigiNode Seeder and the seeders (keeps your settings)       [sudo]
-  --reconfigure        Change the seed names, nameserver, email or which seeders run    [sudo]
-  --uninstall          Stop and remove the seeders (keeps their data)                    [sudo]
+  --update             Update DigiNode Seeder and the seeders (keeps your settings)
+  --reconfigure        Change the seed names, nameserver, email or which seeders run
+  --uninstall          Stop and remove the seeders (keeps their data)
   --version            Show the version
   --help               Show this text
 
-Set up without questions (e.g. for automation), with sudo:
+Set up without questions (e.g. for automation):
   --mainnet <name>     Seed name for DigiByte mainnet (e.g. seed.example.com)
   --testnet <name>     Seed name for DigiByte testnet (e.g. testnetseed.example.com)
   --ns <name>          Nameserver name for this server (e.g. dnsseed.example.com)
   --email <address>    Contact email for the seeds' DNS records
   --yes                Don't ask; accept the defaults
+
+Updating, changing and removing need administrator rights: if you aren't root, it asks
+for your password (sudo).
 
 First install:  curl -sSL https://seedsetup.diginode.tools | sudo bash
 Guide:          $GUIDE_URL
@@ -1002,7 +1008,7 @@ EOF
 main() {
   # Run as the installed diginode-seeder command: no option = status. Run from curl (or a file): no option = set up.
   AS_COMMAND=0; [[ $(basename "$0") == diginode-seeder ]] && AS_COMMAND=1
-  ARGS_TEXT="$*"
+  ORIG_ARGS=("$@")
   local cmd=setup
   [[ $AS_COMMAND -eq 1 && $# -eq 0 ]] && cmd=status
   RECONFIGURE=0; CLI_SET=0
