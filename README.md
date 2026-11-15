@@ -99,7 +99,7 @@ The network only needs a handful of seeders, so it's best if each person runs no
 
 ### Before you ask
 
-- **Let it run for a couple of weeks** and check now and then that it's still answering. The developers want seeds that stay up.
+- **Let it run for a few days** and check that it's still answering. The developers want seeds that stay up.
 - **Check it from the internet**, from any computer:
   ```bash
   dig +short dgbseed.example.com        # a list of node addresses

@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.6"
+DGNS_VERSION="0.2.7"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -34,6 +34,7 @@ MOTD_FILE="/etc/update-motd.d/50-diginode-seeder"   # the login message
 UPDATES_CONF="/etc/apt/apt.conf.d/52diginode-seeder-auto-updates"   # automatic updates: restarts, config files
 APT_PERIODIC_CONF="/etc/apt/apt.conf.d/20auto-upgrades"            # turns daily updates on or off
 DGNT_UPDATES_CONF="/etc/apt/apt.conf.d/52diginode-auto-updates"    # DigiNode Tools' own, if it's on this server
+READY_DAYS=3                                                       # days running before asking to be added to the node software
 RESTART_TIME="03:30"                                               # automatic restarts, server time
 RELEASES_URL="https://github.com/DigiNode-Tools/diginode-seeder/releases"
 GUIDE_URL="https://diginode.tools/diginode-seeder/"
@@ -985,7 +986,7 @@ do_setup() {
   fi
   say "  - See how it's doing, now and then:              ${B}$(cmd_hint)${R}"
   say "  - Update it (keeps your settings):               ${B}$(cmd_hint --update)${R}"
-  say "  - After a couple of weeks, ask for your seed to be added to ${CHAIN_CORE_NAME[${ENABLED[0]%%-*}]},"
+  say "  - After a few days, ask for your seed to be added to ${CHAIN_CORE_NAME[${ENABLED[0]%%-*}]},"
   say "    so nodes start using it. ${B}$(cmd_hint)${R} shows the line to add, and the guide shows how:"
   say "    ${GUIDE_URL}#add-to-digibyte-core"
   [[ -x $CMD_LINK ]] && say "  - All commands:   ${B}diginode-seeder --help${R}"
@@ -1042,14 +1043,14 @@ show_core_status() { # show_core_status <dns_ok 0|1>
     since=$(date -u -d "$SETUP_DATE" '+%-d %B %Y')
   fi
   if [[ $dns_ok -eq 0 ]]; then
-    say "  Not listed yet. Once your DNS records work and it has run reliably for a couple of"
-    say "  weeks, ask for it to be added, so nodes start using it."
-  elif (( days >= 14 )); then
+    say "  Not listed yet. Once your DNS records work and it has run reliably for a few days,"
+    say "  ask for it to be added, so nodes start using it."
+  elif (( days >= READY_DAYS )); then
     say "  Not listed yet. It has run since $since ($days days): time to ask for it to be added,"
     say "  so nodes start using it."
   else
-    say "  Not listed yet. Set up on $since. Once it has run reliably for a couple of weeks"
-    say "  (from $(date -u -d "$SETUP_DATE + 14 days" '+%-d %B %Y')), ask for it to be added, so nodes start using it."
+    say "  Not listed yet. Set up on $since. Once it has run reliably for a few days"
+    say "  (from $(date -u -d "$SETUP_DATE + $READY_DAYS days" '+%-d %B %Y')), ask for it to be added, so nodes start using it."
   fi
   say ""
   say "  The line to add to ${CHAIN_CORE_FILE[$chain]}, at the end of the right list:"
