@@ -47,7 +47,7 @@ The setup installs a `diginode-seeder` command on the server:
 ```bash
 diginode-seeder                        # how the seeders are doing, and how to get them into DigiByte Core
 diginode-seeder --dns                  # check your DNS records, and explain anything that's wrong
-diginode-seeder --ai-prompt            # a ready-made prompt for an AI agent to add your seed to DigiByte Core
+diginode-seeder --ai-prompt            # a ready-made prompt for your AI assistant to add your seed to DigiByte Core
 diginode-seeder --motd on|off          # show (or stop showing) the message when you log in
 diginode-seeder --auto-updates on|off  # install security updates automatically (on by default)
 diginode-seeder --auto-restart on|off  # restart at 03:30 when an update needs it (on by default)
@@ -106,7 +106,7 @@ The network only needs a handful of seeders, so it's best if each person runs no
   dig +short x9.dgbseed.example.com     # the same, for the filtered form nodes ask first
   ```
   On the server, `diginode-seeder` shows the same, and once your seed works it shows the exact line to add.
-- **Have a GitHub account.** The line you add includes your name and GitHub handle, so the developers can reach you if your seeder ever has a problem. You don't need an SSH key or commit signing: DigiByte Core accepts unsigned commits, and GitHub's website and the GitHub CLI's browser sign-in both work without an SSH key.
+- **Have a GitHub account.** The line you add includes your name and GitHub handle, so the developers can reach you if your seeder ever has a problem.
 
 ### Make the pull request on GitHub's website
 
@@ -163,9 +163,9 @@ gh pr create --repo DigiByte-Core/digibyte --base develop \
   --body "Adds dgbseed.example.com as a mainnet DNS seed, run by Your Name. Running since 1 March on its own server (set up with DigiNode Seeder); returns about 25 nodes for both plain and x9. queries. Happy to be contacted if it ever has a problem."
 ```
 
-### Or let an AI agent do it
+### Or let your AI assistant do it
 
-If you use an AI coding agent that can run commands and use GitHub (for example [Claude Code](https://claude.com/claude-code) with the GitHub CLI `gh` signed in), run `diginode-seeder --ai-prompt` on your server: it asks your name and GitHub handle and prints this prompt with everything filled in. Or paste it in yourself, with your details. It checks your seeder first, prepares the pull request, and shows it to you before anything is published:
+Use the desktop app of your preferred AI assistant (such as Claude or ChatGPT) on your own computer: it can make the pull request in your web browser or on the command line. You need a GitHub account. Run `diginode-seeder --ai-prompt` on your server: it asks your name and GitHub handle and prints a prompt with everything filled in, ready to paste. Or paste the one below, with your details. It checks your seeder first, prepares the pull request, and shows it to you before anything is published:
 
 ```text
 I run a DigiByte DNS seeder and want it added to DigiByte Core. Please prepare a pull request.

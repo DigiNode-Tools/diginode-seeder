@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.8"
+DGNS_VERSION="0.2.9"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -1058,7 +1058,7 @@ show_core_status() { # show_core_status <dns_ok 0|1>
     printf '    %s%-13s%s vSeeds.emplace_back("%s"); // Your Name @your-github-handle\n' "$DIM" "${NET_CORE_LIST[$id]}:" "$R" "${SEED_HOST[$id]}"
   done
   say "  How, on GitHub's website or in a terminal:  ${GUIDE_URL}#add-to-digibyte-core"
-  say "  Or let an AI agent do it for you. Get a ready-made prompt with:  ${B}diginode-seeder --ai-prompt${R}"
+  say "  Or let your AI assistant do it for you. Get a ready-made prompt with:  ${B}diginode-seeder --ai-prompt${R}"
 }
 
 # A ready-to-paste prompt for an AI agent that makes the pull request, filled in with this server's details.
@@ -1074,13 +1074,13 @@ do_ai_prompt() {
   for name in "${listed[@]}"; do ok "$name is already in ${CHAIN_CORE_NAME[$chain]}."; done
   [[ ${#todo[@]} -gt 0 ]] || return 0
 
-  title "A prompt for an AI agent"
-  say "An AI agent that can run commands (for example Claude Code) can make the pull request"
-  say "for you. It checks your seeder, prepares everything, and shows it to you before anything"
-  say "is published. Use it on your own computer, not on this server."
+  title "A prompt for your AI assistant"
+  say "Your AI assistant can make the pull request for you. Use the ${B}desktop app${R} of the one"
+  say "you prefer (such as Claude or ChatGPT) on your own computer: it can then do it in your"
+  say "web browser or on the command line. It checks your seeder, prepares everything, and shows"
+  say "it to you before anything is published."
   say ""
-  say "${B}You need a GitHub account${R} (free: https://github.com/signup). That's all: no SSH key and"
-  say "no commit signing. The agent signs you in to GitHub through your web browser."
+  say "${B}You need a GitHub account${R} (free: https://github.com/signup)."
   say ""
   name="Your Name"; handle="your-github-handle"
   if [[ $ASSUME_YES -eq 0 ]] && has_tty; then
@@ -1096,7 +1096,7 @@ do_ai_prompt() {
   done
 
   say ""
-  say "Copy everything between the lines and paste it into your AI agent:"
+  say "Copy everything between the lines and paste it into your AI assistant:"
   say "${DIM}------------------------------------------------------------------------------${R}"
   cat <<EOF
 I run a ${CHAIN_NAME[$chain]} DNS seeder (set up with DigiNode Seeder) and want it added to
@@ -1108,29 +1108,32 @@ ${lines}- My name as it should appear: $name
 - My GitHub handle: $handle
 - Running since: $since
 
+You can do this in my web browser on GitHub's website, or on the command line with
+git and the GitHub CLI (gh), whichever works best for you.
+
 Steps:
-1. Check each seed name answers from the internet: \`dig +short <name>\` and
-   \`dig +short x9.<name>\` (or nslookup, on Windows) should each return several
-   IP addresses. Stop and tell me if any returns nothing.
-2. Check I'm signed in to GitHub with the GitHub CLI: \`gh auth status\`. If the
-   GitHub CLI is missing, help me install it. If I'm not signed in, help me run
-   \`gh auth login\` and choose GitHub.com, HTTPS, and "Login with a web browser",
-   so no SSH key is needed. If I don't have a GitHub account, stop and tell me to
-   create one at https://github.com/signup first. Commit signing isn't required.
-3. Fork DigiByte-Core/digibyte with \`gh\` (if I don't already have a fork) and
-   create a branch from the latest \`develop\` branch.
+1. Check each seed name answers from the internet: each of <name> and x9.<name>
+   should return several IP addresses (for example with \`dig +short <name>\`,
+   nslookup, or an online DNS lookup). Stop and tell me if any returns nothing.
+2. Check I'm signed in to GitHub. If I don't have a GitHub account, stop and tell
+   me to create one at https://github.com/signup first.
+3. Fork DigiByte-Core/digibyte (if I don't already have a fork) and work on a new
+   branch from the latest \`develop\` branch. (On GitHub's website, editing the
+   file on the develop branch and choosing "Create a new branch for this commit
+   and start a pull request" does this.)
 4. In ${CHAIN_CORE_FILE[$chain]}, add these lines, each at the end of its list
    (mainnet: under "// DigiByte MAINNET DNS Seed Server:", testnet: under
    "// DigiByte TESTNET DNS Seed Servers:"), copying the format of the lines
    above exactly:
 ${checks}   Change nothing else in the file.
-5. Commit with a message like "net: Add <seed name> DNS seed". The commit
-   message must not contain any @ mentions (DigiByte's contribution rules).
-6. Show me the diff, the PR title and the PR description, and wait for my OK.
-   The title starts with "net:". The description says which seed(s) it adds,
-   who runs them, since when, and that they answer plain and x9. queries
-   (with the number of addresses each returned).
-7. Only after I say yes: push the branch and open the pull request against
+5. Before anything is published, show me the change, the commit message, the
+   pull request title and its description, and wait for my OK.
+   - Commit message: like "net: Add <seed name> DNS seed", with no @ mentions
+     (DigiByte's contribution rules).
+   - Title: starts with "net:".
+   - Description: which seed(s) it adds, who runs them, since when, and that
+     they answer plain and x9. queries (with the number of addresses each returned).
+6. Only after I say yes: commit, and open the pull request against
    DigiByte-Core/digibyte, base branch \`develop\`. Give me the link, and tell
    me how to follow the reviewers' comments.
 EOF
@@ -1196,7 +1199,7 @@ Usage: diginode-seeder [option]
 
   (no option)          Show how the seeders are doing, and how to get them into DigiByte Core
   --dns                Check your DNS records, and explain anything that's wrong
-  --ai-prompt          A ready-made prompt for an AI agent to add your seed to DigiByte Core
+  --ai-prompt          A ready-made prompt for your AI assistant to add your seed to DigiByte Core
   --motd on|off         Show (or stop showing) the DigiNode Seeder message when you log in
   --auto-updates on|off Install security updates automatically (on by default)
   --auto-restart on|off Restart at 03:30 when an update needs it (on by default)
