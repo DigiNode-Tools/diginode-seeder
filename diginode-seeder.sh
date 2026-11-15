@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.2"
+DGNS_VERSION="0.2.3"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -30,6 +30,7 @@ UNIT_FILE="/etc/systemd/system/diginode-seeder@.service"
 DNSDIST_CONF="/etc/dnsdist/dnsdist.conf"
 DNSDIST_MARK="-- Written by DigiNode Seeder"
 CMD_LINK="/usr/local/bin/diginode-seeder"  # the diginode-seeder command
+MOTD_FILE="/etc/update-motd.d/50-diginode-seeder"   # the login message
 RELEASES_URL="https://github.com/DigiNode-Tools/diginode-seeder/releases"
 GUIDE_URL="https://diginode.tools/diginode-seeder/"
 
@@ -92,6 +93,20 @@ ok()    { printf '%s[✓]%s %s\n' "$GRN" "$R" "$*"; }
 warn()  { printf '%s[!]%s %s\n' "$YLW" "$R" "$*"; }
 fail()  { printf '%s[✗]%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
 title() { printf '\n%s%s%s\n' "$B" "$*" "$R"; }
+
+# The DigiNode logo, as in DigiNode Tools' login message.
+show_logo() {
+  printf '%s' "$B"
+  cat <<'LOGO'
+       ____   _         _   _   __            __
+      / __ \ (_)____ _ (_) / | / /____   ____/ /___
+     / / / // // __ '// / /  |/ // __ \ / __  // _ \
+    / /_/ // // /_/ // / / /|  // /_/ // /_/ //  __/
+   /_____//_/ \__, //_/ /_/ |_/ \____/ \__,_/ \___/
+              /____/       https://diginode.tools
+LOGO
+  printf '%s' "$R"
+}
 
 # Run a slow command with a spinner and the time so far, so it never looks frozen.
 # Its output goes to a log, shown only if it fails.
@@ -244,7 +259,7 @@ check_port53() {
 # Settings
 # ---------------------------------------------------------------------------
 load_settings() {
-  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; ENABLED=()
+  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; ENABLED=()
   declare -gA SEED_HOST=()
   [[ -r $CONF_DIR/settings ]] || return 1
   # shellcheck disable=SC1091
@@ -260,14 +275,26 @@ load_settings() {
   return 0
 }
 
-save_settings() {
+write_settings_file() {
   install -d -m 755 "$CONF_DIR"
   cat > "$CONF_DIR/settings" <<EOF
 # DigiNode Seeder settings. Run the setup again to change them.
 NS_HOST="$NS_HOST"
 SOA_EMAIL="$SOA_EMAIL"
 SETUP_DATE="${SETUP_DATE:-$(date -u +%F)}"
+MOTD="${MOTD:-yes}"
 EOF
+}
+
+# Keep the setup date and login message choice when the settings come from the command line.
+keep_saved_extras() {
+  [[ -r $CONF_DIR/settings ]] || return 0
+  [[ -n $SETUP_DATE ]] || SETUP_DATE=$(sed -n 's/^SETUP_DATE="\(.*\)"$/\1/p' "$CONF_DIR/settings")
+  [[ -n $MOTD ]] || MOTD=$(sed -n 's/^MOTD="\(.*\)"$/\1/p' "$CONF_DIR/settings")
+}
+
+save_settings() {
+  write_settings_file
   local id mbox
   mbox=$(email_to_mbox "$SOA_EMAIL")
   # Remove seeders that were turned off
@@ -346,6 +373,15 @@ ask_settings() {
     else warn "That isn't a valid email address."; fi
   done
   SOA_EMAIL="$REPLY"
+  ask_motd
+}
+
+ask_motd() {
+  title "Login message"
+  say "When you log in over SSH, it can show the DigiNode logo and the command to manage your"
+  say "seeders (diginode-seeder), so you don't need to remember anything."
+  local def=y; [[ $MOTD == no ]] && def=n
+  if confirm "Show the DigiNode Seeder login message?" "$def"; then MOTD=yes; else MOTD=no; fi
 }
 
 show_summary() {
@@ -356,6 +392,7 @@ show_summary() {
   done
   printf '  %-36s %s\n' "Nameserver (this server)" "$NS_HOST"
   printf '  %-36s %s\n' "Contact email" "$SOA_EMAIL"
+  printf '  %-36s %s\n' "Login message" "${MOTD:-yes}"
   printf '  %-36s %s\n' "Server address" "${PUBLIC_V4:-none}${LOCAL_V6:+, $LOCAL_V6}"
 }
 
@@ -496,6 +533,63 @@ install_command() {
   fi
   [[ -z $tmp ]] || rm -f "$tmp"
   ln -sfn "$INSTALL_DIR/bin/diginode-seeder" "$CMD_LINK"
+}
+
+# The login message: a script in /etc/update-motd.d, run at each SSH login. Like DigiNode Tools, the system's
+# own /etc/motd text is moved aside while it's on, and put back when it's turned off.
+apply_motd() {
+  if [[ ${MOTD:-yes} == no ]]; then remove_motd; return 0; fi
+  if [[ ! -d /etc/update-motd.d ]]; then warn "No /etc/update-motd.d on this system, so no login message."; return 0; fi
+  {
+    printf '#!/bin/sh\n# DigiNode Seeder login message. Written by DigiNode Seeder %s - updates overwrite it.\n' "$DGNS_VERSION"
+    printf '# Turn it off with: diginode-seeder --motd off\n'
+    cat <<'EOF'
+b=$(printf '\033[1m'); y=$(printf '\033[33m'); r=$(printf '\033[0m')
+echo
+# DigiNode Tools on the same server shows the logo already.
+if [ ! -x /etc/update-motd.d/50-diginode ]; then
+printf '%s' "$b"
+cat <<'LOGO'
+       ____   _         _   _   __            __
+      / __ \ (_)____ _ (_) / | / /____   ____/ /___
+     / / / // // __ '// / /  |/ // __ \ / __  // _ \
+    / /_/ // // /_/ // / / /|  // /_/ // /_/ //  __/
+   /_____//_/ \__, //_/ /_/ |_/ \____/ \__,_/ \___/
+              /____/       https://diginode.tools
+LOGO
+printf '%s\n' "$r"
+fi
+printf '     Check DigiNode Seeder Status: %sdiginode-seeder%s\n\n' "$b" "$r"
+printf '      For help, enter: %sdiginode-seeder --help%s\n' "$b" "$r"
+# Say so if anything has stopped.
+stopped=""
+systemctl is-active -q dnsdist || stopped=" dnsdist"
+for f in /etc/diginode-seeder/*.conf; do
+  [ -e "$f" ] || continue
+  id=$(basename "$f" .conf)
+  systemctl is-active -q "diginode-seeder@$id" || stopped="$stopped $id"
+done
+if [ -n "$stopped" ]; then
+  printf '\n     %s[!] Not running:%s%s - check with: %sdiginode-seeder%s\n' "$y" "$stopped" "$r" "$b" "$r"
+fi
+echo
+EOF
+  } > "$MOTD_FILE.new"
+  chmod 755 "$MOTD_FILE.new"
+  mv -f "$MOTD_FILE.new" "$MOTD_FILE"
+  if [[ -s /etc/motd && ! -e /etc/motd.before-diginode-seeder ]]; then
+    mv /etc/motd /etc/motd.before-diginode-seeder
+  fi
+  ok "Login message on (turn it off with: diginode-seeder --motd off)"
+}
+
+remove_motd() {
+  [[ -e $MOTD_FILE ]] || return 0
+  rm -f "$MOTD_FILE"
+  if [[ -e /etc/motd.before-diginode-seeder && ! -e /etc/motd ]]; then
+    mv /etc/motd.before-diginode-seeder /etc/motd
+  fi
+  ok "Login message off"
 }
 
 write_dnsdist() {
@@ -739,8 +833,11 @@ wait_for_dns() {
 # Commands
 # ---------------------------------------------------------------------------
 do_setup() {
-  title "DigiNode Seeder $DGNS_VERSION"
-  say "Sets up DNS seeders, which help new nodes find the network."
+  say ""
+  show_logo
+  say ""
+  say "  ${B}DigiNode Seeder $DGNS_VERSION${R}: sets up DNS seeders, which help new nodes find the network."
+  say ""
   check_system
   detect_addresses
   check_port53
@@ -749,6 +846,11 @@ do_setup() {
   fi
   if [[ ${#ENABLED[@]} -eq 0 || $RECONFIGURE -eq 1 ]]; then
     [[ $CLI_SET -eq 1 ]] || ask_settings
+  fi
+  [[ -n $CLI_MOTD ]] && MOTD="$CLI_MOTD"
+  # Set up before the login message existed: ask once (or turn it on, with --yes).
+  if [[ -z $MOTD ]]; then
+    if [[ $ASSUME_YES -eq 0 ]] && has_tty; then ask_motd; else MOTD=yes; fi
   fi
   [[ ${#ENABLED[@]} -gt 0 && -n $NS_HOST && -n $SOA_EMAIL ]] || fail "Settings are incomplete."
   show_summary
@@ -759,6 +861,7 @@ do_setup() {
   build_seeders
   install_service
   install_command
+  apply_motd
   save_settings
   write_dnsdist
   open_firewall
@@ -967,6 +1070,7 @@ do_uninstall() {
   fi
   for f in "$CONF_DIR"/*.conf; do [[ -e $f ]] && mv "$f" "$f.off"; done
   [[ -L $CMD_LINK ]] && rm -f "$CMD_LINK"
+  remove_motd
   ok "Seeders stopped and removed. Settings kept in $CONF_DIR, data in $STATE_BASE."
   say "To set it up again: curl -sSL https://seedsetup.diginode.tools | sudo bash"
   say "Remember to remove the seed names' NS records at your DNS provider."
@@ -981,6 +1085,7 @@ Usage: diginode-seeder [option]
   (no option)          Show how the seeders are doing, and how to get them into DigiByte Core
   --dns                Check your DNS records, and explain anything that's wrong
   --ai-prompt          A ready-made prompt for an AI agent to add your seed to DigiByte Core
+  --motd on|off        Show (or stop showing) the DigiNode Seeder message when you log in
   --update             Update DigiNode Seeder and the seeders (keeps your settings)
   --reconfigure        Change the seed names, nameserver, email or which seeders run
   --uninstall          Stop and remove the seeders (keeps their data)
@@ -1013,7 +1118,7 @@ main() {
   [[ $AS_COMMAND -eq 1 && $# -eq 0 ]] && cmd=status
   RECONFIGURE=0; CLI_SET=0
   declare -gA SEED_HOST=()
-  ENABLED=(); NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""
+  ENABLED=(); NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; CLI_MOTD=""
   local cli_main="" cli_test="" cli_ns="" cli_email=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1028,6 +1133,12 @@ main() {
       --testnet) cli_test="${2:-}"; shift ;;
       --ns) cli_ns="${2:-}"; shift ;;
       --email) cli_email="${2:-}"; shift ;;
+      --motd)
+        case "${2:-}" in
+          on|yes) CLI_MOTD=yes ;; off|no) CLI_MOTD=no ;;
+          *) fail "Use --motd on or --motd off." ;;
+        esac
+        shift ;;
       --yes|-y) ASSUME_YES=1 ;;
       --help|-h) usage; exit 0 ;;
       *) usage; fail "Unknown option: $1" ;;
@@ -1041,6 +1152,15 @@ main() {
     update) do_update; return ;;
     uninstall) do_uninstall; return ;;
   esac
+  # Just --motd on|off, on a server that's set up: change only that.
+  if [[ -n $CLI_MOTD && -z $cli_main$cli_test && $RECONFIGURE -eq 0 && -r $CONF_DIR/settings ]]; then
+    need_root
+    load_settings
+    MOTD="$CLI_MOTD"
+    write_settings_file
+    apply_motd
+    return
+  fi
   if [[ -n $cli_main$cli_test ]]; then
     [[ -n $cli_ns && -n $cli_email ]] || fail "--ns and --email are needed with --mainnet/--testnet."
     ENABLED=()
@@ -1049,6 +1169,8 @@ main() {
     valid_hostname "$cli_ns" || fail "Invalid --ns name."
     email_to_mbox "$cli_email" >/dev/null || fail "Invalid --email (no dot allowed before the @)."
     NS_HOST="${cli_ns,,}"; SOA_EMAIL="$cli_email"; CLI_SET=1
+    MOTD="$CLI_MOTD"
+    keep_saved_extras
   fi
   do_setup
 }
