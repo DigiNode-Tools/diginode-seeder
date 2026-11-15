@@ -6,7 +6,7 @@ A DNS seeder helps new DigiByte nodes find the network. When a node starts for t
 
 DigiNode Seeder sets up a **mainnet** seeder, a **testnet** seeder (DigiByte Core v9, testnet26), or both on the same server, with only one IP address.
 
-It's part of [DigiNode Tools](https://diginode.tools). Guide: [DigiNode Seeder on diginode.tools](https://diginode.tools/diginode-seeder/). Prefer to set one up by hand? See the [manual setup guide](https://diginode.tools/diginode-seeder/manual/).
+It's part of [DigiNode Tools](https://diginode.tools). Guide: [DigiNode Seeder on diginode.tools](https://diginode.tools/diginode-seeder/). Prefer to set one up by hand? See [Prefer to do it yourself?](https://diginode.tools/diginode-seeder/#by-hand) in the guide.
 
 ## What you need
 
@@ -79,15 +79,19 @@ Internet ──DNS──▶  dnsdist ──dgbseed.example.com──────
 - **One IP, several seeders.** Each seeder needs to answer DNS on port 53, and only one program can use a port. [dnsdist](https://dnsdist.org) answers on port 53 and passes each seed name to its own seeder. Everything else is refused, so the server can't be used as an open DNS server, and each address is rate-limited. Seeders only answer over UDP (their answers always fit), so questions over TCP are refused.
 - **The seeder** is [DigiNode-Tools/digibyte-seeder](https://github.com/DigiNode-Tools/digibyte-seeder), DigiByte's seeder with DigiByte Core v9 testnet support and options for future network changes. It's built from source on your server.
 - **Each seeder is a locked-down systemd service** (`diginode-seeder@digibyte-mainnet`, `diginode-seeder@digibyte-testnet`) running as its own user. It starts at boot and restarts if it stops. Its crawl data stays between restarts.
+- **Security updates** install themselves (`unattended-upgrades`), keeping changed config files so dnsdist is updated too.
+- Servers with less than 1 GB of memory get a 1 GB swap file, so building the seeder can't run out of memory.
 - **Other blockchains later.** Everything chain-specific is in tables at the top of the script, so seeders for other chains (for example NITO or Bitcoin) can be added later and run on the same server, each with its own name: `dgbseed`, `dgbtestnetseed`, `nitoseed`... all handed to `seedserver`.
 - Seeders answer both plain (`dgbseed.example.com`) and filtered (`x9.dgbseed.example.com`) queries. DigiByte Core asks for the filtered form first.
 
 | Where | What |
 |---|---|
 | `/etc/diginode-seeder/` | Your settings and one `.conf` per seeder |
-| `/opt/diginode-seeder/` | The seeder's source and program |
+| `/opt/diginode-seeder/` | The seeder's source and program, and the `diginode-seeder` command |
 | `/var/lib/diginode-seeder/` | Each seeder's crawl data |
 | `/etc/dnsdist/dnsdist.conf` | Written by the setup (an existing one is backed up first) |
+| `/etc/update-motd.d/50-diginode-seeder` | The login message |
+| `/etc/apt/apt.conf.d/52diginode-seeder-auto-updates` | Automatic restarts, and keeping changed config files |
 
 Logs: `journalctl -u diginode-seeder@digibyte-mainnet`.
 
