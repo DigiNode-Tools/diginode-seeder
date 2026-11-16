@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.2.11"
+DGNS_VERSION="0.2.12"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -38,6 +38,7 @@ READY_DAYS=3                                                       # days runnin
 RESTART_TIME="03:30"                                               # automatic restarts, server time
 RELEASES_URL="https://github.com/DigiNode-Tools/diginode-seeder/releases"
 GUIDE_URL="https://diginode.tools/diginode-seeder/"
+SSH_KEY_URL="https://diginode.tools/linux-setup/#ssh-key"         # how to sign in with an SSH key
 
 # ---------------------------------------------------------------------------
 # Chains and networks
@@ -269,7 +270,7 @@ check_port53() {
 # Settings
 # ---------------------------------------------------------------------------
 load_settings() {
-  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; AUTO_UPDATES=""; AUTO_RESTART=""; ENABLED=()
+  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; AUTO_UPDATES=""; AUTO_RESTART=""; FIREWALL=""; ENABLED=()
   declare -gA SEED_HOST=()
   [[ -r $CONF_DIR/settings ]] || return 1
   # shellcheck disable=SC1091
@@ -295,6 +296,7 @@ SETUP_DATE="${SETUP_DATE:-$(date -u +%F)}"
 MOTD="${MOTD:-yes}"
 AUTO_UPDATES="${AUTO_UPDATES:-yes}"
 AUTO_RESTART="${AUTO_RESTART:-yes}"
+FIREWALL="${FIREWALL:-}"
 EOF
 }
 
@@ -305,6 +307,7 @@ keep_saved_extras() {
   [[ -n $MOTD ]] || MOTD=$(sed -n 's/^MOTD="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $AUTO_UPDATES ]] || AUTO_UPDATES=$(sed -n 's/^AUTO_UPDATES="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $AUTO_RESTART ]] || AUTO_RESTART=$(sed -n 's/^AUTO_RESTART="\(.*\)"$/\1/p' "$CONF_DIR/settings")
+  [[ -n $FIREWALL ]] || FIREWALL=$(sed -n 's/^FIREWALL="\(.*\)"$/\1/p' "$CONF_DIR/settings")
 }
 
 save_settings() {
@@ -389,6 +392,7 @@ ask_settings() {
   SOA_EMAIL="$REPLY"
   ask_motd
   ask_updates
+  ask_firewall
 }
 
 ask_updates() {
@@ -411,6 +415,46 @@ ask_motd() {
   if confirm "Show the DigiNode Seeder login message?" "$def"; then MOTD=yes; else MOTD=no; fi
 }
 
+# The SSH port(s) this server listens on, from its own settings (so a different port never locks anyone out),
+# plus the port of the connection we're on.
+ssh_ports() {
+  local p
+  p=$(sshd -T 2>/dev/null | awk '$1=="port"{print $2}')
+  [[ -n ${SSH_CONNECTION:-} ]] && p="$p ${SSH_CONNECTION##* }"
+  [[ -n ${p// /} ]] || p=22
+  tr ' ' '\n' <<<"$p" | grep -E '^[0-9]+$' | sort -un | tr '\n' ' ' | sed 's/ $//'
+}
+
+# Other programs listening on the internet (not SSH or DNS), which a firewall would block.
+other_listeners() {
+  local ssh; ssh=" $(ssh_ports) "
+  ss -Hlntu 2>/dev/null | awk '{print $1, $5}' | while read -r proto addr; do
+    local port="${addr##*:}" host="${addr%:*}"
+    case "$host" in 127.*|"[::1]"|::1|"[::ffff:127."*) continue ;; esac
+    [[ $port == 53 || $ssh == *" $port "* ]] && continue
+    [[ $proto == udp && ( $port == 68 || $port == 546 || $port == 323 ) ]] && continue   # DHCP, chrony
+    printf '%s/%s\n' "$port" "$proto"
+  done | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+
+ask_firewall() {
+  title "Firewall"
+  if command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+    say "This server already has a firewall (firewalld). DNS (port 53) is opened in it."
+    FIREWALL=no; return
+  fi
+  say "A firewall blocks everything except what the server needs:"
+  say "SSH (port $(ssh_ports)) and DNS (port 53)."
+  local def=y others; others=$(other_listeners)
+  [[ $FIREWALL == no ]] && def=n
+  if [[ -n $others ]]; then
+    warn "Other programs listen on this server: $others."
+    say "    The firewall would block them, so think before saying yes."
+    [[ $FIREWALL == yes ]] || def=n
+  fi
+  if confirm "Turn on a firewall (ufw) that only lets in SSH and DNS?" "$def"; then FIREWALL=yes; else FIREWALL=no; fi
+}
+
 show_summary() {
   title "Summary"
   local id
@@ -424,6 +468,8 @@ show_summary() {
   [[ ${AUTO_UPDATES:-yes} == yes ]] && upd="automatic, restarting at $RESTART_TIME when needed"
   [[ ${AUTO_UPDATES:-yes} == yes && ${AUTO_RESTART:-yes} == no ]] && upd="automatic, no automatic restarts"
   printf '  %-28s %s\n' "Security updates" "$upd"
+  local fw="no"; [[ $FIREWALL == yes ]] && fw="yes (lets in SSH on port $(ssh_ports), and DNS)"
+  printf '  %-28s %s\n' "Firewall" "$fw"
   printf '  %-28s %s\n' "Server address" "${PUBLIC_V4:-none}${LOCAL_V6:+, $LOCAL_V6}"
 }
 
@@ -741,11 +787,51 @@ write_dnsdist() {
   ok "dnsdist config written ($DNSDIST_CONF)"
 }
 
-open_firewall() {
+# The firewall. FIREWALL=yes: ufw on, letting in only SSH and DNS. Otherwise, an existing firewall
+# (ufw or firewalld) just gets DNS opened in it. Over TCP too: dnsdist answers "refused" there, which
+# lets an uptime monitor check the server with a port check.
+apply_firewall() {
+  if [[ $FIREWALL == yes ]]; then
+    if ! command -v ufw >/dev/null; then
+      spin "Installing ufw" apt-get install -y -qq ufw || { warn "Couldn't install ufw, so no firewall."; return 0; }
+    fi
+    local p
+    ufw default deny incoming >/dev/null
+    ufw default allow outgoing >/dev/null
+    for p in $(ssh_ports); do ufw allow "$p/tcp" comment 'SSH' >/dev/null; done
+    ufw allow 53/udp comment 'DNS (DigiNode Seeder)' >/dev/null
+    ufw allow 53/tcp comment 'DNS (DigiNode Seeder)' >/dev/null
+    touch "$CONF_DIR/firewall-on"
+    ufw --force enable >/dev/null && ok "Firewall on: only SSH (port $(ssh_ports)) and DNS (port 53) are let in"
+    return 0
+  fi
+  if [[ $FIREWALL == no && -f $CONF_DIR/firewall-on ]]; then
+    ufw --force disable >/dev/null 2>&1 && ok "Firewall off"
+    rm -f "$CONF_DIR/firewall-on"
+    return 0
+  fi
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-    ufw allow 53/udp >/dev/null && ok "Firewall (ufw): UDP port 53 opened"
+    ufw allow 53/udp >/dev/null && ufw allow 53/tcp >/dev/null && ok "Firewall (ufw): port 53 (DNS) opened"
   elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd -q --permanent --add-port=53/udp && firewall-cmd -q --reload && ok "Firewall (firewalld): UDP port 53 opened"
+    firewall-cmd -q --permanent --add-port=53/udp && firewall-cmd -q --permanent --add-port=53/tcp \
+      && firewall-cmd -q --reload && ok "Firewall (firewalld): port 53 (DNS) opened"
+  fi
+}
+
+# For the status and the setup: the firewall, and whether SSH still takes passwords.
+security_status() {
+  if [[ $FIREWALL == yes ]] && ufw status 2>/dev/null | grep -q "Status: active"; then
+    printf '  %b %s\n' "${GRN}✓${R}" "Firewall: on (lets in SSH and DNS)"
+  elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+    printf '  %b %s\n' "${GRN}✓${R}" "Firewall: on (ufw)"
+  elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+    printf '  %b %s\n' "${GRN}✓${R}" "Firewall: on (firewalld)"
+  else
+    printf '  %b %s\n' "${YLW}!${R}" "Firewall: off (turn on: diginode-seeder --firewall on)"
+  fi
+  if [[ $(sshd -T 2>/dev/null | awk '$1=="passwordauthentication"{print $2}') == yes ]]; then
+    printf '  %b %s\n' "${YLW}!${R}" "SSH accepts passwords. Safer: sign in with an SSH key, then turn"
+    printf '    %s\n' "passwords off. How: $SSH_KEY_URL"
   fi
 }
 
@@ -950,6 +1036,7 @@ do_setup() {
   check_system
   detect_addresses
   check_port53
+  EXISTING=0; [[ -r $CONF_DIR/settings ]] && EXISTING=1
   if [[ $CLI_SET -eq 0 ]] && load_settings; then
     info "Found an existing setup."
   fi
@@ -964,6 +1051,13 @@ do_setup() {
   if [[ -z $AUTO_UPDATES ]]; then
     if [[ $ASSUME_YES -eq 0 ]] && has_tty; then ask_updates; else AUTO_UPDATES=yes; AUTO_RESTART=${AUTO_RESTART:-yes}; fi
   fi
+  # The firewall: asked once. Without questions, a new server gets it (unless other programs listen on the
+  # internet); an existing one is left as it is (diginode-seeder --firewall on turns it on).
+  if [[ -z $FIREWALL ]]; then
+    if [[ $ASSUME_YES -eq 0 ]] && has_tty; then ask_firewall
+    elif [[ $EXISTING -eq 0 && -z $(other_listeners) ]]; then FIREWALL=yes
+    else FIREWALL=no; fi
+  fi
   [[ ${#ENABLED[@]} -gt 0 && -n $NS_HOST && -n $SOA_EMAIL ]] || fail "Settings are incomplete."
   show_summary
   confirm "Go ahead?" y || exit 0
@@ -977,7 +1071,7 @@ do_setup() {
   apply_updates
   save_settings
   write_dnsdist
-  open_firewall
+  apply_firewall
   start_all
   test_local
   local dns_ok=0
@@ -999,6 +1093,10 @@ do_setup() {
   say "    so nodes start using it. ${B}$(cmd_hint)${R} shows the line to add. How:"
   say "    ${GUIDE_URL}#add-to-digibyte-core"
   [[ -x $CMD_LINK ]] && say "  - All commands:   ${B}diginode-seeder --help${R}"
+  if [[ $(sshd -T 2>/dev/null | awk '$1=="passwordauthentication"{print $2}') == yes ]]; then
+    say "  - SSH still accepts passwords. Safer: sign in with an SSH key, then turn"
+    say "    passwords off. How: $SSH_KEY_URL"
+  fi
   return 0
 }
 
@@ -1028,6 +1126,7 @@ do_status() {
   check_dns && dns_ok=1
   title "System"
   updates_status
+  security_status
   show_core_status "$dns_ok"
   say ""
   say "${DIM}All commands: diginode-seeder --help${R}"
@@ -1205,6 +1304,10 @@ do_uninstall() {
   for f in "$CONF_DIR"/*.conf; do [[ -e $f ]] && mv "$f" "$f.off"; done
   [[ -L $CMD_LINK ]] && rm -f "$CMD_LINK"
   remove_motd
+  if [[ -f $CONF_DIR/firewall-on ]]; then
+    ufw delete allow 53/udp >/dev/null 2>&1; ufw delete allow 53/tcp >/dev/null 2>&1
+    ok "Firewall: port 53 closed again (the firewall stays on, letting in SSH)"
+  fi
   ok "Seeders stopped and removed. Settings kept in $CONF_DIR, data in $STATE_BASE."
   say "To set it up again: curl -sSL https://seedsetup.diginode.tools | sudo bash"
   say "Remember to remove the seed names' NS records at your DNS provider."
@@ -1225,6 +1328,7 @@ Usage: diginode-seeder [option]
   --motd on|off          Show the DigiNode Seeder login message, or not
   --auto-updates on|off  Install security updates automatically (default: on)
   --auto-restart on|off  Restart at 03:30 when an update needs it (default: on)
+  --firewall on|off      A firewall that only lets in SSH and DNS
   --uninstall            Stop and remove the seeders (keeps their data)
   --version              Show the version
   --help                 Show this text
@@ -1257,6 +1361,7 @@ on_off() { # on_off <option> <value> -> ONOFF=yes|no
 # Choices given as options win over saved ones. Turning automatic updates off also turns restarts off.
 apply_cli_choices() {
   [[ -n $CLI_MOTD ]] && MOTD="$CLI_MOTD"
+  [[ -n $CLI_FIREWALL ]] && FIREWALL="$CLI_FIREWALL"
   # Turning updates back on brings back automatic restarts too (the default), unless --auto-restart says otherwise.
   if [[ $CLI_UPDATES == yes && $AUTO_UPDATES == no && -z $CLI_RESTART ]]; then AUTO_RESTART=yes; fi
   [[ -n $CLI_UPDATES ]] && AUTO_UPDATES="$CLI_UPDATES"
@@ -1275,7 +1380,7 @@ main() {
   RECONFIGURE=0; CLI_SET=0
   declare -gA SEED_HOST=()
   ENABLED=(); NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; CLI_MOTD=""
-  AUTO_UPDATES=""; AUTO_RESTART=""; CLI_UPDATES=""; CLI_RESTART=""
+  AUTO_UPDATES=""; AUTO_RESTART=""; CLI_UPDATES=""; CLI_RESTART=""; FIREWALL=""; CLI_FIREWALL=""; EXISTING=0
   local cli_main="" cli_test="" cli_ns="" cli_email=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1293,6 +1398,7 @@ main() {
       --motd) on_off "$1" "${2:-}"; CLI_MOTD=$ONOFF; shift ;;
       --auto-updates) on_off "$1" "${2:-}"; CLI_UPDATES=$ONOFF; shift ;;
       --auto-restart) on_off "$1" "${2:-}"; CLI_RESTART=$ONOFF; shift ;;
+      --firewall) on_off "$1" "${2:-}"; CLI_FIREWALL=$ONOFF; shift ;;
       --yes|-y) ASSUME_YES=1 ;;
       --help|-h) usage; exit 0 ;;
       *) usage; fail "Unknown option: $1" ;;
@@ -1306,14 +1412,15 @@ main() {
     update) do_update; return ;;
     uninstall) do_uninstall; return ;;
   esac
-  # Just --motd / --auto-updates / --auto-restart, on a server that's set up: change only those.
-  if [[ -n $CLI_MOTD$CLI_UPDATES$CLI_RESTART && -z $cli_main$cli_test && $RECONFIGURE -eq 0 && -r $CONF_DIR/settings ]]; then
+  # Just --motd / --auto-updates / --auto-restart / --firewall, on a server that's set up: change only those.
+  if [[ -n $CLI_MOTD$CLI_UPDATES$CLI_RESTART$CLI_FIREWALL && -z $cli_main$cli_test && $RECONFIGURE -eq 0 && -r $CONF_DIR/settings ]]; then
     need_root
     load_settings
     apply_cli_choices
     write_settings_file
     if [[ -n $CLI_MOTD ]]; then apply_motd; fi
     if [[ -n $CLI_UPDATES$CLI_RESTART ]]; then apply_updates; fi
+    if [[ -n $CLI_FIREWALL ]]; then apply_firewall; fi
     return
   fi
   if [[ -n $cli_main$cli_test ]]; then

@@ -51,11 +51,14 @@ diginode-seeder --ai-prompt            # a ready-made prompt for your AI assista
 diginode-seeder --motd on|off          # show (or stop showing) the message when you log in
 diginode-seeder --auto-updates on|off  # install security updates automatically (on by default)
 diginode-seeder --auto-restart on|off  # restart at 03:30 when an update needs it (on by default)
+diginode-seeder --firewall on|off      # a firewall that only lets in SSH and DNS
 diginode-seeder --update               # update DigiNode Seeder and the seeders (keeps your settings)
 diginode-seeder --reconfigure          # change names or seeders
 diginode-seeder --uninstall            # stop and remove
 diginode-seeder --help                 # all options
 ```
+
+The setup offers a **firewall** (ufw) that only lets in SSH and DNS. It reads the SSH port from the server's own settings, so a different port doesn't lock you out, and if other programs listen on the server it says so and suggests no. If the server already has a firewall (ufw or firewalld), it just opens port 53 in it. The status (`diginode-seeder`) also warns if SSH still accepts passwords, with a link to [setting up an SSH key](https://diginode.tools/linux-setup/#ssh-key); it never changes SSH settings itself, since that could lock you out.
 
 The setup also turns on **automatic security updates** (Debian's or Ubuntu's own, with `unattended-upgrades`), restarting at 03:30 server time only when an update needs it; the seeders start again by themselves. You can say no to either. The setup also offers a login message: each time you log in over SSH, it shows the DigiNode logo and the `diginode-seeder` command, so there's nothing to remember months later (and it says if a seeder has stopped). Updating, changing and removing need administrator rights: if you aren't logged in as root, the command asks for your password (sudo) by itself. Updating only restarts what changed. Running the setup command again also updates.
 
@@ -82,6 +85,7 @@ Internet ──DNS──▶  dnsdist ──dgbseed.example.com──────
 - **Security updates** install themselves (`unattended-upgrades`), keeping changed config files so dnsdist is updated too.
 - Servers with less than 1 GB of memory get a 1 GB swap file, so building the seeder can't run out of memory.
 - **Other blockchains later.** Everything chain-specific is in tables at the top of the script, so seeders for other chains (for example NITO or Bitcoin) can be added later and run on the same server, each with its own name: `dgbseed`, `dgbtestnetseed`, `nitoseed`... all handed to `seedserver`.
+- **The firewall**, if you say yes, lets in only SSH and port 53 (UDP and TCP; TCP questions get a "refused" answer, which lets an uptime monitor check the server with a port check).
 - Seeders answer both plain (`dgbseed.example.com`) and filtered (`x9.dgbseed.example.com`) queries. DigiByte Core asks for the filtered form first.
 
 | Where | What |
