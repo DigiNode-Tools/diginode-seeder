@@ -59,8 +59,10 @@ diginode-seeder --auto-updates on|off  # install security updates automatically 
 diginode-seeder --auto-restart on|off  # restart at 03:30 when an update needs it (on by default)
 diginode-seeder --firewall on|off      # a firewall that only lets in SSH and DNS
 diginode-seeder --update               # update DigiNode Seeder and the seeders (keeps your settings)
-diginode-seeder --add nito             # add a seeder (asks only for its names; the others keep running)
-diginode-seeder --remove nito          # stop and remove one seeder
+diginode-seeder --add digibyte         # add seeders: asks about mainnet and testnet, then only their names
+diginode-seeder --add digibyte-testnet # add just one network (the other seeders keep running)
+diginode-seeder --add nito             # add a Nito mainnet seeder
+diginode-seeder --remove nito          # stop and remove seeders (a chain, or one network)
 diginode-seeder --reconfigure          # change names or seeders
 diginode-seeder --uninstall            # stop and remove
 diginode-seeder --help                 # all options
