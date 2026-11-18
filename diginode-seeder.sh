@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.0"
+DGNS_VERSION="0.3.1"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -323,10 +323,83 @@ check_port53() {
 }
 
 # ---------------------------------------------------------------------------
+# The server's own name (hostname)
+#
+# Providers often leave a default name such as "localhost", "debian" or "vmi123456", which makes it hard to see
+# which server you're logged in to. The setup offers to rename those to DEFAULT_HOSTNAME. It never offers to
+# change a name someone chose: other software on the server may rely on it.
+# ---------------------------------------------------------------------------
+DEFAULT_HOSTNAME="diginode-seeder"
+CLOUD_HOSTNAME_CONF="/etc/cloud/cloud.cfg.d/99-diginode-seeder-hostname.cfg"
+
+# Does this hostname look like a provider's or installer's default?
+generic_hostname() { # generic_hostname <name>
+  local h="${1,,}" ip4dash=""
+  h="${h%%.*}"                                   # first label only
+  [[ -n ${PUBLIC_V4:-} ]] && ip4dash="${PUBLIC_V4//./-}"
+  case "$h" in
+    ""|localhost|localhost.*|debian|ubuntu|server|host|vps|vm|node|default|linux|raspberrypi) return 0 ;;
+    debian-*|ubuntu-*) return 0 ;;               # e.g. DigitalOcean's ubuntu-s-1vcpu-1gb-lon1-01, Hetzner's ubuntu-4gb-hel1-1
+  esac
+  [[ -n $ip4dash && $h == *"$ip4dash"* ]] && return 0                            # contains the IP address
+  [[ $h =~ ^(vps|vm|vmi|srv|server|host|node|instance|ip|static|cloud|box)[-_]?[0-9a-f-]*[0-9][0-9a-f-]*$ ]] && return 0
+  [[ $h =~ ^[0-9a-f-]{8,}$ ]] && return 0        # only numbers/hex, e.g. a provider ID
+  return 1
+}
+
+valid_short_hostname() { [[ ${1,,} =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; }
+
+# Sets NEW_HOSTNAME (empty = leave the name as it is). Asks when it can; RENAME_HOST=no remembers a "no".
+choose_hostname() {
+  NEW_HOSTNAME=""
+  local current; current=$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || true)
+  if [[ -n $CLI_HOSTNAME ]]; then
+    [[ $CLI_HOSTNAME == keep || ${CLI_HOSTNAME,,} == "${current,,}" ]] || NEW_HOSTNAME="${CLI_HOSTNAME,,}"
+    return 0
+  fi
+  generic_hostname "$current" || return 0
+  [[ $RENAME_HOST == no ]] && return 0
+  if [[ $ASSUME_YES -eq 0 ]] && has_tty; then
+    title "Hostname"
+    say "This server is called \"$current\", a default name from its provider."
+    say "If it's only used for DigiNode Seeder, renaming it \"$DEFAULT_HOSTNAME\" helps: the"
+    say "name shows in your terminal, so you can see where you're logged in. If other"
+    say "software on this server relies on its name, keep it."
+    if confirm "Rename it \"$DEFAULT_HOSTNAME\"?" y; then NEW_HOSTNAME="$DEFAULT_HOSTNAME"; RENAME_HOST=""; else RENAME_HOST=no; fi
+  elif [[ $EXISTING -eq 0 ]]; then
+    NEW_HOSTNAME="$DEFAULT_HOSTNAME"             # new server, no questions: rename a default name
+  fi
+  return 0
+}
+
+apply_hostname() {
+  [[ -n $NEW_HOSTNAME ]] || return 0
+  local old; old=$(hostname 2>/dev/null || true)
+  if ! hostnamectl set-hostname "$NEW_HOSTNAME" 2>/dev/null; then
+    printf '%s\n' "$NEW_HOSTNAME" > /etc/hostname
+    hostname "$NEW_HOSTNAME" 2>/dev/null || { warn "Couldn't rename this server."; return 0; }
+  fi
+  # The server must be able to find its own name, or sudo pauses and warns "unable to resolve host".
+  # Rewritten in place (not sed -i, which replaces the file), so its owner and permissions stay the same.
+  local hosts
+  if hosts=$(awk -v h="$NEW_HOSTNAME" '/^127\.0\.1\.1[[:space:]]/ { if (!done) print "127.0.1.1       " h; done=1; next }
+                                        { print } END { if (!done) print "127.0.1.1       " h }' /etc/hosts) \
+     && printf '%s\n' "$hosts" > /etc/hosts; then :
+  else
+    warn "Couldn't add $NEW_HOSTNAME to /etc/hosts. Add this line to it: 127.0.1.1 $NEW_HOSTNAME"
+  fi
+  # Some providers' cloud-init sets the name again at every boot. Tell it to keep this one.
+  if [[ -d /etc/cloud/cloud.cfg.d ]]; then
+    printf '# Written by DigiNode Seeder: keep the server name it set (%s).\npreserve_hostname: true\n' "$NEW_HOSTNAME" > "$CLOUD_HOSTNAME_CONF"
+  fi
+  ok "Server renamed from \"$old\" to \"$NEW_HOSTNAME\" (your prompt shows it after you log in again)"
+}
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 load_settings() {
-  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; AUTO_UPDATES=""; AUTO_RESTART=""; FIREWALL=""; ENABLED=()
+  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; AUTO_UPDATES=""; AUTO_RESTART=""; FIREWALL=""; RENAME_HOST=""; ENABLED=()
   declare -gA SEED_HOST=() SERVER_HOST=()
   local chain var
   for chain in "${CHAINS[@]}"; do unset "NS_HOST_$chain"; done
@@ -365,6 +438,7 @@ MOTD="${MOTD:-yes}"
 AUTO_UPDATES="${AUTO_UPDATES:-yes}"
 AUTO_RESTART="${AUTO_RESTART:-yes}"
 FIREWALL="${FIREWALL:-}"
+RENAME_HOST="${RENAME_HOST:-}"
 EOF
 }
 
@@ -376,6 +450,7 @@ keep_saved_extras() {
   [[ -n $AUTO_UPDATES ]] || AUTO_UPDATES=$(sed -n 's/^AUTO_UPDATES="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $AUTO_RESTART ]] || AUTO_RESTART=$(sed -n 's/^AUTO_RESTART="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $FIREWALL ]] || FIREWALL=$(sed -n 's/^FIREWALL="\(.*\)"$/\1/p' "$CONF_DIR/settings")
+  [[ -n $RENAME_HOST ]] || RENAME_HOST=$(sed -n 's/^RENAME_HOST="\(.*\)"$/\1/p' "$CONF_DIR/settings")
 }
 
 save_settings() {
@@ -556,6 +631,7 @@ show_summary() {
     printf '  %-28s %s\n' "Server name" "$(server_hosts)"
   fi
   printf '  %-28s %s\n' "Contact email" "$SOA_EMAIL"
+  [[ -n $NEW_HOSTNAME ]] && printf '  %-28s %s\n' "Rename this server" "$(hostname 2>/dev/null) -> $NEW_HOSTNAME"
   printf '  %-28s %s\n' "Login message" "${MOTD:-yes}"
   local upd="no"
   [[ ${AUTO_UPDATES:-yes} == yes ]] && upd="automatic, restarting at $RESTART_TIME when needed"
@@ -1155,11 +1231,13 @@ do_setup() {
     elif [[ $EXISTING -eq 0 && -z $(other_listeners) ]]; then FIREWALL=yes
     else FIREWALL=no; fi
   fi
+  choose_hostname
   [[ ${#ENABLED[@]} -gt 0 && -n $NS_HOST && -n $SOA_EMAIL ]] || fail "Settings are incomplete."
   local c; for c in $(enabled_chains); do [[ -n $(ns_host "$c") ]] || fail "Settings are incomplete (no server name for ${CHAIN_NAME[$c]})."; done
   show_summary
   confirm "Go ahead?" y || exit 0
   remember_fingerprints
+  apply_hostname
   ensure_swap
   install_packages
   build_seeders
@@ -1466,6 +1544,8 @@ Set up without questions (e.g. for automation):
   --nito <name>          Nito mainnet seed name (e.g. nitoseed.example.com)
   --ns <name>            Name for this server (e.g. seedserver.example.com)
   --nito-ns <name>       A different server name for the Nito seed (optional)
+  --hostname <name>      Rename this server (default: offered as diginode-seeder
+                         when it has a provider's default name); "keep" = don't
   --email <address>      Contact email for the seeds' DNS records
   --yes                  Don't ask; accept the defaults
 
@@ -1510,6 +1590,7 @@ main() {
   declare -gA SEED_HOST=() SERVER_HOST=()
   ENABLED=(); NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; CLI_MOTD=""
   AUTO_UPDATES=""; AUTO_RESTART=""; CLI_UPDATES=""; CLI_RESTART=""; FIREWALL=""; CLI_FIREWALL=""; EXISTING=0
+  RENAME_HOST=""; CLI_HOSTNAME=""; NEW_HOSTNAME=""
   local cli_main="" cli_test="" cli_nito="" cli_ns="" cli_nito_ns="" cli_email=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1525,6 +1606,9 @@ main() {
       --nito) cli_nito="${2:-}"; shift ;;
       --ns) cli_ns="${2:-}"; shift ;;
       --nito-ns) cli_nito_ns="${2:-}"; shift ;;
+      --hostname)
+        CLI_HOSTNAME="${2:-}"; shift
+        [[ $CLI_HOSTNAME == keep ]] || valid_short_hostname "$CLI_HOSTNAME" || fail "Invalid --hostname (letters, numbers and dashes, or \"keep\")." ;;
       --email) cli_email="${2:-}"; shift ;;
       --motd) on_off "$1" "${2:-}"; CLI_MOTD=$ONOFF; shift ;;
       --auto-updates) on_off "$1" "${2:-}"; CLI_UPDATES=$ONOFF; shift ;;

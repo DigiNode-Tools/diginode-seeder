@@ -78,6 +78,8 @@ curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --yes \
 
 Add `--nito nitoseed.example.com` for a Nito seeder, and `--nito-ns <name>` to give it its own server name.
 
+If the server still has its provider's default name (such as `localhost`, `debian` or `vmi123456`), the setup offers to rename it `diginode-seeder`, so you can see where you're logged in. It only offers this for default names, and a "no" is remembered. `--hostname <name>` picks a name, and `--hostname keep` leaves it alone.
+
 ## How it works
 
 ```
