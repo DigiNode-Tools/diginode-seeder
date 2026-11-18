@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.1"
+DGNS_VERSION="0.3.2"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -1060,13 +1060,16 @@ start_all() {
 # Ask this server for each seed name until it hands out nodes.
 test_local() {
   title "Waiting for the seeders to find nodes (up to 3 minutes)"
-  local id n addr="${LOCAL_V4:-$LOCAL_V6}" waited=0
+  local id n last steady addr="${LOCAL_V4:-$LOCAL_V6}" waited=0
   for id in "${ENABLED[@]}"; do
-    n=0
-    # Wait for a useful number of nodes (10), or until 3 minutes have passed in all.
+    n=0; last=-1; steady=0
+    # Wait for a useful number of nodes (10), or until the count has stopped rising for 20 seconds (a small
+    # network, such as a testnet, may never reach 10), or until 3 minutes have passed in all.
     while :; do
       n=$(dig +short +time=2 +tries=1 @"$addr" "${SEED_HOST[$id]}" A 2>/dev/null | grep -c '^[0-9]' || true)
-      (( n >= 10 || waited >= 180 )) && break
+      if (( n > 0 && n == last )); then steady=$((steady + 5)); else steady=0; fi
+      last=$n
+      (( n >= 10 || steady >= 20 || waited >= 180 )) && break
       [[ -t 1 ]] && printf '\r%s[…]%s %s: %s nodes so far  %s%dm %02ds%s ' "$CYN" "$R" "${SEED_HOST[$id]}" "$n" "$DIM" $((waited / 60)) $((waited % 60)) "$R"
       sleep 5; waited=$((waited + 5))
     done
