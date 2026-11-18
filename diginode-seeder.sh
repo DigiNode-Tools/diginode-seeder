@@ -1205,7 +1205,7 @@ wait_for_dns() {
 # ---------------------------------------------------------------------------
 # Networks a chain has but DigiNode Seeder doesn't support yet, and why.
 declare -A NET_NOT_YET=(
-  [nito-testnet]="Nito testnet support hasn't been added yet: it has no working seeds or nodes to start from."
+  [nito-testnet]="Nito testnet support hasn't been added yet."
 )
 
 # What was typed: a network id (digibyte-testnet) = just that one, or a chain (digibyte) = its networks.
