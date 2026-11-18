@@ -1,10 +1,14 @@
 # DigiNode Seeder
 
-Run a DNS seeder for DigiByte on your own server, with one command.
+Run DNS seeders for DigiByte and Nito on your own server, with one command.
 
-A DNS seeder helps new DigiByte nodes find the network. When a node starts for the first time, it asks the seeders built into DigiByte Core for the addresses of other nodes. A seeder constantly checks the network and hands out nodes that are up and on the right chain.
+A DNS seeder helps new nodes find the network. When a node starts for the first time, it asks the seeders built into its node software (DigiByte Core, Nito Core) for the addresses of other nodes. A seeder constantly checks the network and hands out nodes that are up and on the right chain.
 
-DigiNode Seeder sets up a **mainnet** seeder, a **testnet** seeder (DigiByte Core v9, testnet26), or both on the same server, with only one IP address.
+DigiNode Seeder sets up any of these on the same server, with only one IP address:
+
+- **DigiByte mainnet**
+- **DigiByte testnet** (DigiByte Core v9, testnet26)
+- **Nito mainnet** (lists only Nito Core v4 nodes, which are the only ones accepted after Nito's v4 hard fork)
 
 It's part of [DigiNode Tools](https://diginode.tools). Guide: [DigiNode Seeder on diginode.tools](https://diginode.tools/diginode-seeder/). Prefer to set one up by hand? See [Prefer to do it yourself?](https://diginode.tools/diginode-seeder/#by-hand) in the guide.
 
@@ -25,8 +29,8 @@ curl -sSL https://seedsetup.diginode.tools | sudo bash
 
 It asks which seeders to run and what to call them:
 
-- **Seed names**, such as `dgbseed.example.com` (mainnet) and `dgbtestnetseed.example.com` (testnet).
-- **A name for the server**, such as `seedserver.example.com`.
+- **Seed names**, such as `dgbseed.example.com` (DigiByte mainnet), `dgbtestnetseed.example.com` (testnet) and `nitoseed.example.com` (Nito).
+- **A name for the server**, such as `seedserver.example.com`. Each chain can have its own, such as `seedserver.nito.example`, so one chain's seeders can move to another server later without touching the other's records.
 - **A contact email**, shown in the seeds' DNS records.
 
 Then it builds the seeder, starts everything, waits until the seeders find nodes, and shows the DNS records to add. Add them, press Enter, and it checks them for you, saying what's wrong if anything is:
@@ -38,6 +42,8 @@ dgbseed.example.com         NS    seedserver.example.com
 dgbtestnetseed.example.com  NS    seedserver.example.com
 ```
 
+With a separate server name for Nito, there's an A (and AAAA) record for that name too, and the Nito seed's NS record points to it.
+
 On Cloudflare, set the server's records (`seedserver`) to **DNS only** (grey cloud). Once the records are live, `dig dgbseed.example.com` should return a list of node addresses.
 
 ## After setup: the `diginode-seeder` command
@@ -45,9 +51,9 @@ On Cloudflare, set the server's records (`seedserver`) to **DNS only** (grey clo
 The setup installs a `diginode-seeder` command on the server:
 
 ```bash
-diginode-seeder                        # how the seeders are doing, and how to get them into DigiByte Core
+diginode-seeder                        # how the seeders are doing, and how to get them into DigiByte Core / Nito Core
 diginode-seeder --dns                  # check your DNS records, and explain anything that's wrong
-diginode-seeder --ai-prompt            # a ready-made prompt for your AI assistant to add your seed to DigiByte Core
+diginode-seeder --ai-prompt            # a ready-made prompt for your AI assistant to add your seeds to DigiByte Core / Nito Core
 diginode-seeder --motd on|off          # show (or stop showing) the message when you log in
 diginode-seeder --auto-updates on|off  # install security updates automatically (on by default)
 diginode-seeder --auto-restart on|off  # restart at 03:30 when an update needs it (on by default)
@@ -70,18 +76,21 @@ curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --yes \
   --ns seedserver.example.com --email you@example.com
 ```
 
+Add `--nito nitoseed.example.com` for a Nito seeder, and `--nito-ns <name>` to give it its own server name.
+
 ## How it works
 
 ```
                         port 53                          local only
-Internet ──DNS──▶  dnsdist ──dgbseed.example.com─────────▶ mainnet seeder (127.0.0.1:5301)
-                     │    └─dgbtestnetseed.example.com───▶ testnet seeder (127.0.0.1:5302)
+Internet ──DNS──▶  dnsdist ──dgbseed.example.com─────────▶ DigiByte mainnet seeder (127.0.0.1:5301)
+                     │    ├─dgbtestnetseed.example.com───▶ DigiByte testnet seeder (127.0.0.1:5302)
+                     │    └─nitoseed.example.com─────────▶ Nito mainnet seeder     (127.0.0.1:5303)
                      └── any other name: refused
 ```
 
 - **One IP, several seeders.** Each seeder needs to answer DNS on port 53, and only one program can use a port. [dnsdist](https://dnsdist.org) answers on port 53 and passes each seed name to its own seeder. Everything else is refused, so the server can't be used as an open DNS server, and each address is rate-limited. Seeders only answer over UDP (their answers always fit), so questions over TCP are refused.
-- **The seeder** is [DigiNode-Tools/diginode-dns-seeder](https://github.com/DigiNode-Tools/diginode-dns-seeder), DigiByte's seeder with DigiByte Core v9 testnet support and options for future network changes. It's built from source on your server.
-- **Each seeder is a locked-down systemd service** (`diginode-seeder@digibyte-mainnet`, `diginode-seeder@digibyte-testnet`) running as its own user. It starts at boot and restarts if it stops. Its crawl data stays between restarts.
+- **The seeder** is [DigiNode DNS Seeder](https://github.com/DigiNode-Tools/diginode-dns-seeder), one program for every chain (each seeder runs it with `--chain`). It's built from source on your server, from a tagged release, so every server runs a version that has been tested.
+- **Each seeder is a locked-down systemd service** (`diginode-seeder@digibyte-mainnet`, `diginode-seeder@digibyte-testnet`, `diginode-seeder@nito-mainnet`) running as its own user. It starts at boot and restarts if it stops. Its crawl data stays between restarts.
 - **Security updates** install themselves (`unattended-upgrades`), keeping changed config files so dnsdist is updated too.
 - Servers with less than 1 GB of memory get a 1 GB swap file, so building the seeder can't run out of memory.
 - **Other blockchains later.** Everything chain-specific is in tables at the top of the script, so seeders for other chains (for example NITO or Bitcoin) can be added later and run on the same server, each with its own name: `dgbseed`, `dgbtestnetseed`, `nitoseed`... all handed to `seedserver`.
