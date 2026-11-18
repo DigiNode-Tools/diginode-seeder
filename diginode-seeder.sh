@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.3"
+DGNS_VERSION="0.3.4"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -1201,6 +1201,103 @@ wait_for_dns() {
 }
 
 # ---------------------------------------------------------------------------
+# Adding or removing one seeder (--add / --remove), leaving the others and every other setting as they are
+# ---------------------------------------------------------------------------
+# A network as typed: an id (nito-mainnet, digibyte-testnet) or a chain (nito = its mainnet). Sets NET_ID.
+resolve_network() { # resolve_network <name>
+  local n="${1,,}"
+  if [[ -n ${NET_LABEL[$n]:-} ]]; then NET_ID="$n"; return 0; fi
+  if [[ -n ${NET_LABEL[$n-mainnet]:-} ]]; then NET_ID="$n-mainnet"; return 0; fi
+  local ids; ids=$(printf '%s\n' "${!NET_LABEL[@]}" | sort | tr '\n' ' ')
+  fail "Unknown network \"$1\". Use one of: ${ids% } (or a chain name for its mainnet, e.g. nito)."
+}
+
+# Networks that aren't running yet, for the status ("also available").
+available_networks() {
+  local chain net id
+  for chain in "${CHAINS[@]}"; do
+    for net in ${CHAIN_NETWORKS[$chain]}; do
+      id="$chain-$net"
+      [[ " ${ENABLED[*]} " == *" $id "* ]] || printf '%s\n' "$id"
+    done
+  done
+  return 0
+}
+
+# The command to add a network: the chain's name alone for its mainnet.
+add_hint() { local id="$1"; [[ ${id#*-} == mainnet ]] && id="${id%%-*}"; cmd_hint "--add $id"; }
+
+# Adds NET_ID to ENABLED, asking only for its seed name (and a server name, if its chain has none yet).
+add_network() {
+  local id="$NET_ID" chain="${NET_ID%%-*}" def seed_domain other
+  if [[ " ${ENABLED[*]} " == *" $id "* ]]; then
+    ok "The ${NET_LABEL[$id]} seeder is already set up (${SEED_HOST[$id]}). Nothing to add."
+    exit 0
+  fi
+  title "Adding a ${NET_LABEL[$id]} seeder"
+  say "Your other seeders and settings stay as they are."
+  # Seed name
+  def="${NET_SEED_PREFIX[$id]}.${NS_HOST#*.}"
+  # Removed before? Suggest the name it had.
+  [[ -r $CONF_DIR/$id.conf.off ]] && def=$(sed -n 's/^SEED_HOST="\(.*\)"$/\1/p' "$CONF_DIR/$id.conf.off")
+  [[ -n $def ]] || def="${NET_SEED_PREFIX[$id]}.${NS_HOST#*.}"
+  if [[ -n $CLI_ADD_NAME ]]; then
+    REPLY="$CLI_ADD_NAME"
+  elif [[ $ASSUME_YES -eq 0 ]] && has_tty; then
+    while :; do
+      ask "Seed name for ${NET_LABEL[$id]}" "$def"
+      valid_hostname "$REPLY" && break
+      warn "That isn't a valid name."
+    done
+  else
+    fail "Give the seed name with --name (e.g. --add ${chain} --name $def)."
+  fi
+  valid_hostname "$REPLY" || fail "Invalid seed name: $REPLY"
+  for other in "${ENABLED[@]}"; do
+    [[ ${REPLY,,} == "${SEED_HOST[$other]}" ]] && fail "${SEED_HOST[$other]} is already used by the ${NET_LABEL[$other]} seeder."
+  done
+  SEED_HOST[$id]="${REPLY,,}"
+  # Server name: the chain's own if it already has one, otherwise asked (default seedserver.<the seed's domain>).
+  if [[ -z ${SERVER_HOST[$chain]:-} ]]; then
+    seed_domain="${SEED_HOST[$id]#*.}"
+    def="$SERVER_PREFIX.$seed_domain"
+    if [[ -n $CLI_ADD_SERVER ]]; then
+      REPLY="$CLI_ADD_SERVER"
+    elif [[ $ASSUME_YES -eq 0 ]] && has_tty; then
+      say ""
+      say "Its seed name is handed to a server name that points at this server."
+      say "Your other seeds use $NS_HOST."
+      say "A name of its own, such as $def, lets you move the"
+      say "${CHAIN_NAME[$chain]} seeders to another server later without touching the others."
+      while :; do
+        ask "Server name for the ${CHAIN_NAME[$chain]} seeds" "$def"
+        valid_hostname "$REPLY" && break
+        warn "That isn't a valid name."
+      done
+    else
+      REPLY="$def"
+    fi
+    valid_hostname "$REPLY" || fail "Invalid server name: $REPLY"
+    [[ ${REPLY,,} == "${SEED_HOST[$id]}" || ${REPLY,,} == *".${SEED_HOST[$id]}" ]] \
+      && fail "The server name can't be ${SEED_HOST[$id]} or inside it."
+    SERVER_HOST[$chain]="${REPLY,,}"
+  fi
+  ENABLED+=("$id")
+}
+
+# Removes NET_ID from ENABLED (its seeder is stopped when the settings are saved).
+remove_network() {
+  local id="$NET_ID" keep=() other
+  [[ " ${ENABLED[*]} " == *" $id "* ]] || { ok "There's no ${NET_LABEL[$id]} seeder on this server. Nothing to remove."; exit 0; }
+  [[ ${#ENABLED[@]} -gt 1 ]] || fail "That's the only seeder here. To remove everything: $(cmd_hint --uninstall)"
+  title "Removing the ${NET_LABEL[$id]} seeder"
+  say "It stops, and ${SEED_HOST[$id]} stops answering. Its crawl data is kept, so adding it again"
+  say "later starts where it left off. Remember to delete its NS record at your DNS provider."
+  for other in "${ENABLED[@]}"; do [[ $other == "$id" ]] || keep+=("$other"); done
+  ENABLED=("${keep[@]}")
+}
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 do_setup() {
@@ -1216,7 +1313,10 @@ do_setup() {
   if [[ $CLI_SET -eq 0 ]] && load_settings; then
     info "Found an existing setup."
   fi
-  if [[ ${#ENABLED[@]} -eq 0 || $RECONFIGURE -eq 1 ]]; then
+  if [[ -n $ADD_NET || -n $REMOVE_NET ]]; then
+    [[ $EXISTING -eq 1 && ${#ENABLED[@]} -gt 0 ]] || fail "DigiNode Seeder isn't set up on this server yet. Set it up first: curl -sSL https://seedsetup.diginode.tools | sudo bash"
+    if [[ -n $ADD_NET ]]; then resolve_network "$ADD_NET"; add_network; else resolve_network "$REMOVE_NET"; remove_network; fi
+  elif [[ ${#ENABLED[@]} -eq 0 || $RECONFIGURE -eq 1 ]]; then
     [[ $CLI_SET -eq 1 ]] || ask_settings
   fi
   apply_cli_choices
@@ -1234,7 +1334,7 @@ do_setup() {
     elif [[ $EXISTING -eq 0 && -z $(other_listeners) ]]; then FIREWALL=yes
     else FIREWALL=no; fi
   fi
-  choose_hostname
+  [[ -n $ADD_NET$REMOVE_NET ]] || choose_hostname
   [[ ${#ENABLED[@]} -gt 0 && -n $NS_HOST && -n $SOA_EMAIL ]] || fail "Settings are incomplete."
   local c; for c in $(enabled_chains); do [[ -n $(ns_host "$c") ]] || fail "Settings are incomplete (no server name for ${CHAIN_NAME[$c]})."; done
   show_summary
@@ -1301,6 +1401,12 @@ do_status() {
     for chain in "${CHAINS[@]}"; do   # set up before 0.3.0 and not updated yet
       [[ -f $INSTALL_DIR/bin/$chain-seeder.commit ]] || continue
       printf '    %s%s seeder build %s%s\n' "$DIM" "${CHAIN_NAME[$chain]}" "$(cat "$INSTALL_DIR/bin/$chain-seeder.commit")" "$R"
+    done
+  fi
+  local avail; avail=$(available_networks)
+  if [[ -n $avail ]]; then
+    for id in $avail; do
+      printf '    %sAlso available: %s (add it: %s)%s\n' "$DIM" "${NET_LABEL[$id]}" "$(add_hint "$id")" "$R"
     done
   fi
   title "From the internet (DNS records and public DNS)"
@@ -1532,6 +1638,8 @@ Usage: diginode-seeder [option]
   --ai-prompt            A prompt for your AI assistant to get your seeds into
                          DigiByte Core or Nito Core
   --update               Update DigiNode Seeder and the seeders (keeps settings)
+  --add <network>        Add a seeder, e.g. --add nito (asks only for its names)
+  --remove <network>     Stop and remove one seeder, e.g. --remove nito
   --reconfigure          Change the names, the email or which seeders run
   --motd on|off          Show the DigiNode Seeder login message, or not
   --auto-updates on|off  Install security updates automatically (default: on)
@@ -1547,6 +1655,8 @@ Set up without questions (e.g. for automation):
   --nito <name>          Nito mainnet seed name (e.g. nitoseed.example.com)
   --ns <name>            Name for this server (e.g. seedserver.example.com)
   --nito-ns <name>       A different server name for the Nito seed (optional)
+  --name <name>          With --add: the seed name (e.g. seed.example.com)
+  --server <name>        With --add: the server name for a new chain (optional)
   --hostname <name>      Rename this server (default: offered as diginode-seeder
                          when it has a provider's default name); "keep" = don't
   --email <address>      Contact email for the seeds' DNS records
@@ -1594,6 +1704,7 @@ main() {
   ENABLED=(); NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; CLI_MOTD=""
   AUTO_UPDATES=""; AUTO_RESTART=""; CLI_UPDATES=""; CLI_RESTART=""; FIREWALL=""; CLI_FIREWALL=""; EXISTING=0
   RENAME_HOST=""; CLI_HOSTNAME=""; NEW_HOSTNAME=""
+  ADD_NET=""; REMOVE_NET=""; CLI_ADD_NAME=""; CLI_ADD_SERVER=""
   local cli_main="" cli_test="" cli_nito="" cli_ns="" cli_nito_ns="" cli_email=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1604,6 +1715,10 @@ main() {
       --version|-v) echo "DigiNode Seeder $DGNS_VERSION"; exit 0 ;;
       --uninstall) cmd=uninstall ;;
       --reconfigure) RECONFIGURE=1 ;;
+      --add) ADD_NET="${2:-}"; [[ -n $ADD_NET ]] || fail "Which network? e.g. --add nito"; shift ;;
+      --remove) REMOVE_NET="${2:-}"; [[ -n $REMOVE_NET ]] || fail "Which network? e.g. --remove nito"; shift ;;
+      --name) CLI_ADD_NAME="${2:-}"; shift ;;
+      --server) CLI_ADD_SERVER="${2:-}"; shift ;;
       --mainnet) cli_main="${2:-}"; shift ;;
       --testnet) cli_test="${2:-}"; shift ;;
       --nito) cli_nito="${2:-}"; shift ;;
@@ -1640,6 +1755,11 @@ main() {
     if [[ -n $CLI_UPDATES$CLI_RESTART ]]; then apply_updates; fi
     if [[ -n $CLI_FIREWALL ]]; then apply_firewall; fi
     return
+  fi
+  if [[ -n $ADD_NET$REMOVE_NET ]]; then
+    [[ -z $cli_main$cli_test$cli_nito && $RECONFIGURE -eq 0 ]] || fail "Use --add or --remove on their own (not with --reconfigure, --mainnet, --testnet or --nito)."
+    [[ -z $ADD_NET || -z $REMOVE_NET ]] || fail "Use --add or --remove, one at a time."
+    need_root
   fi
   if [[ -n $cli_main$cli_test$cli_nito ]]; then
     [[ -n $cli_ns && -n $cli_email ]] || fail "--ns and --email are needed with --mainnet/--testnet/--nito."

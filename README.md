@@ -59,6 +59,8 @@ diginode-seeder --auto-updates on|off  # install security updates automatically 
 diginode-seeder --auto-restart on|off  # restart at 03:30 when an update needs it (on by default)
 diginode-seeder --firewall on|off      # a firewall that only lets in SSH and DNS
 diginode-seeder --update               # update DigiNode Seeder and the seeders (keeps your settings)
+diginode-seeder --add nito             # add a seeder (asks only for its names; the others keep running)
+diginode-seeder --remove nito          # stop and remove one seeder
 diginode-seeder --reconfigure          # change names or seeders
 diginode-seeder --uninstall            # stop and remove
 diginode-seeder --help                 # all options
