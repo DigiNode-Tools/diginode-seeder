@@ -2,7 +2,7 @@ Required Notice: Copyright (c) 2026 Oliver Stedall (https://diginode.tools)
 
 DigiNode Seeder, part of DigiNode Tools, is licensed under the PolyForm Perimeter License 1.0.0 below. The DigiNode Tools name and logo aren't covered by this licence - see [TRADEMARKS.md](https://github.com/DigiNode-Tools/diginode-tools/blob/main/TRADEMARKS.md). For a plain-English summary, see the [Licence FAQ](https://github.com/DigiNode-Tools/diginode-tools/blob/main/docs/licence_faq.md).
 
-The DigiByte seeder it builds (https://github.com/DigiNode-Tools/digibyte-seeder) is not covered by this licence: it keeps its own terms (its files carry the MIT licence of the Bitcoin code it comes from).
+The DigiByte seeder it builds (https://github.com/DigiNode-Tools/diginode-dns-seeder) is not covered by this licence: it keeps its own terms (its files carry the MIT licence of the Bitcoin code it comes from).
 
 # PolyForm Perimeter License 1.0.0
 

@@ -15,7 +15,7 @@
 # License 1.0.0 - see LICENCE.md.
 
 set -Eeuo pipefail
-trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder/issues\n" "$LINENO" >&2' ERR
+trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
 DGNS_VERSION="0.2.12"
 
@@ -36,7 +36,7 @@ APT_PERIODIC_CONF="/etc/apt/apt.conf.d/20auto-upgrades"            # turns daily
 DGNT_UPDATES_CONF="/etc/apt/apt.conf.d/52diginode-auto-updates"    # DigiNode Tools' own, if it's on this server
 READY_DAYS=3                                                       # days running before asking to be added to the node software
 RESTART_TIME="03:30"                                               # automatic restarts, server time
-RELEASES_URL="https://github.com/DigiNode-Tools/diginode-seeder/releases"
+RELEASES_URL="https://github.com/DigiNode-Tools/diginode-seeder-setup/releases"
 GUIDE_URL="https://diginode.tools/diginode-seeder/"
 SSH_KEY_URL="https://diginode.tools/linux-setup/#ssh-key"         # how to sign in with an SSH key
 
@@ -48,7 +48,7 @@ SSH_KEY_URL="https://diginode.tools/linux-setup/#ssh-key"         # how to sign 
 # ---------------------------------------------------------------------------
 CHAINS=(digibyte)
 declare -A CHAIN_NAME=([digibyte]="DigiByte")
-declare -A CHAIN_REPO=([digibyte]="https://github.com/DigiNode-Tools/digibyte-seeder.git")
+declare -A CHAIN_REPO=([digibyte]="https://github.com/DigiNode-Tools/diginode-dns-seeder.git")
 declare -A CHAIN_BRANCH=([digibyte]="master")
 declare -A CHAIN_NETWORKS=([digibyte]="mainnet testnet")
 
