@@ -8,7 +8,7 @@ DigiNode Seeder sets up any of these on the same server, with only one IP addres
 
 - **DigiByte mainnet**
 - **DigiByte testnet** (DigiByte Core v9, testnet26)
-- **Nito mainnet** (lists only Nito Core v4 nodes, which are the only ones accepted after Nito's v4 hard fork)
+- **Nito mainnet** and **Nito testnet** (lists only Nito Core v4 nodes, which are the only ones accepted after Nito's v4 hard fork)
 - **Litecoin mainnet** and **Litecoin testnet** (testnet4; lists only Litecoin Core v0.21 nodes with MWEB)
 
 It's part of [DigiNode Tools](https://diginode.tools). Guide: [DigiNode Seeder on diginode.tools](https://diginode.tools/diginode-seeder/). Prefer to set one up by hand? See [Prefer to do it yourself?](https://diginode.tools/diginode-seeder/#by-hand) in the guide.
@@ -85,7 +85,7 @@ diginode-seeder --ssh-passwords off    # SSH key logins only (offered when you l
 diginode-seeder --update               # update DigiNode Seeder and the seeders (keeps your settings)
 diginode-seeder --add digibyte         # add seeders: asks about mainnet and testnet, then only their names
 diginode-seeder --add digibyte-testnet # add just one network (the other seeders keep running)
-diginode-seeder --add nito             # add a Nito mainnet seeder
+diginode-seeder --add nito             # add Nito seeders (asks about mainnet and testnet)
 diginode-seeder --add litecoin         # add Litecoin seeders (asks about mainnet and testnet)
 diginode-seeder --remove nito          # stop and remove seeders (a chain, or one network)
 diginode-seeder --reconfigure          # change names or seeders
