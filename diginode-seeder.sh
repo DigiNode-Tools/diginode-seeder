@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.9"
+DGNS_VERSION="0.3.10"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -49,7 +49,7 @@ SSH_KEY_URL="https://diginode.tools/linux-setup/#ssh-key"         # how to sign 
 # been tested, not whatever is on its main branch). Each seeder runs it with --chain <chain>.
 # ---------------------------------------------------------------------------
 SEEDER_REPO="https://github.com/DigiNode-Tools/diginode-dns-seeder.git"
-SEEDER_TAG="v0.3.0"
+SEEDER_TAG="v0.3.1"
 
 CHAINS=(digibyte nito litecoin)
 declare -A CHAIN_NAME=([digibyte]="DigiByte" [nito]="Nito" [litecoin]="Litecoin")
