@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.8"
+DGNS_VERSION="0.3.9"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -34,7 +34,6 @@ MOTD_FILE="/etc/update-motd.d/50-diginode-seeder"   # the login message
 UPDATES_CONF="/etc/apt/apt.conf.d/52diginode-seeder-auto-updates"   # automatic updates: restarts, config files
 APT_PERIODIC_CONF="/etc/apt/apt.conf.d/20auto-upgrades"            # turns daily updates on or off
 DGNT_UPDATES_CONF="/etc/apt/apt.conf.d/52diginode-auto-updates"    # DigiNode Tools' own, if it's on this server
-READY_DAYS=3                                                       # days running before asking to be added to the node software
 RESTART_TIME="03:30"                                               # automatic restarts, server time
 RELEASES_URL="https://github.com/DigiNode-Tools/diginode-seeder-setup/releases"
 GUIDE_URL="https://diginode.tools/diginode-seeder/"
@@ -1766,8 +1765,13 @@ do_setup() {
   step "$(cmd_hint)" "See how it's doing, now and then:"
   step "$(cmd_hint --update)" "Update it (keeps your settings):"
   local cores=""; for c in $(enabled_chains); do cores+="${cores:+ and }${CHAIN_CORE_NAME[$c]}"; done
-  step "$(cmd_hint --ai-prompt)" "In a few days, ask for your seeds to be added to $cores," \
-       "so nodes start using them. Your AI assistant can do it for you:"
+  if [[ $dns_ok -eq 1 ]]; then
+    step "$(cmd_hint --ai-prompt)" "Your seeds work, so ask now for them to be added to $cores," \
+         "so nodes start using them. Your AI assistant can do it for you:"
+  else
+    step "$(cmd_hint --ai-prompt)" "Once your DNS records work, ask for your seeds to be added to $cores," \
+         "so nodes start using them. Your AI assistant can do it for you:"
+  fi
   if [[ $(ssh_passwords_state) == yes ]]; then
     if [[ $(ssh_login_method) == publickey ]]; then
       step "diginode-seeder --ssh-passwords off" "SSH still accepts passwords. You logged in with a key, so turn them off:"
@@ -1842,7 +1846,7 @@ core_line() { # core_line <id> <name> <handle>
 
 # Is each of a chain's seeds in its node software's seed list yet? If not, show the line to add, and when.
 show_core_status() { # show_core_status <dns_ok 0|1> <chain>
-  local dns_ok="$1" chain="$2" id src days=0 since="" missing=()
+  local dns_ok="$1" chain="$2" id src missing=()
   title "${CHAIN_CORE_NAME[$chain]}"
   src=$(curl -fsS -m 10 "${CHAIN_CORE_RAW[$chain]}" 2>/dev/null || true)
   for id in "${ENABLED[@]}"; do
@@ -1854,20 +1858,12 @@ show_core_status() { # show_core_status <dns_ok 0|1> <chain>
     fi
   done
   [[ ${#missing[@]} -gt 0 ]] || return 0
-  if [[ -n $SETUP_DATE ]]; then
-    days=$(( ( $(date -u +%s) - $(date -u -d "$SETUP_DATE" +%s) ) / 86400 ))
-    since=$(date -u -d "$SETUP_DATE" '+%-d %B %Y')
-  fi
   if [[ $dns_ok -eq 0 ]]; then
-    say "  Not listed yet. Once your DNS records work and it has run reliably for a"
-    say "  few days, ask for it to be added, so nodes start using it."
-  elif (( days >= READY_DAYS )); then
-    say "  Not listed yet. It has run since $since ($days days): time to ask"
-    say "  for it to be added, so nodes start using it."
+    say "  Not listed yet. Once your DNS records work, ask for it to be added,"
+    say "  so nodes start using it."
   else
-    say "  Not listed yet. Set up on $since. Once it has run reliably for a few"
-    say "  days (from $(date -u -d "$SETUP_DATE + $READY_DAYS days" '+%-d %B %Y')), ask for it to be added, so nodes"
-    say "  start using it."
+    say "  Not listed yet. It works from the internet: ask for it to be added now,"
+    say "  so nodes start using it."
   fi
   say ""
   say "  The line to add to ${CHAIN_CORE_FILE[$chain]}:"
