@@ -1,6 +1,6 @@
 # DigiNode Seeder
 
-Run DNS seeders for DigiByte and Nito on your own server, with one command.
+Run DNS seeders for DigiByte, Nito and Litecoin on your own server, with one command.
 
 A DNS seeder helps new nodes find the network. When a node starts for the first time, it asks the seeders built into its node software (DigiByte Core, Nito Core) for the addresses of other nodes. A seeder constantly checks the network and hands out nodes that are up and on the right chain.
 
@@ -9,6 +9,7 @@ DigiNode Seeder sets up any of these on the same server, with only one IP addres
 - **DigiByte mainnet**
 - **DigiByte testnet** (DigiByte Core v9, testnet26)
 - **Nito mainnet** (lists only Nito Core v4 nodes, which are the only ones accepted after Nito's v4 hard fork)
+- **Litecoin mainnet** and **Litecoin testnet** (testnet4; lists only Litecoin Core v0.21 nodes with MWEB)
 
 It's part of [DigiNode Tools](https://diginode.tools). Guide: [DigiNode Seeder on diginode.tools](https://diginode.tools/diginode-seeder/). Prefer to set one up by hand? See [Prefer to do it yourself?](https://diginode.tools/diginode-seeder/#by-hand) in the guide.
 
@@ -27,24 +28,30 @@ Log in to your server with SSH and run:
 curl -sSL https://seedsetup.diginode.tools | sudo bash
 ```
 
-It asks which seeders to run and what to call them:
+To set up only Nito seeders (no DigiByte or Litecoin questions), use:
 
-- **Seed names**, such as `dgbseed.example.com` (DigiByte mainnet), `dgbtestnetseed.example.com` (testnet) and `nitoseed.example.com` (Nito).
-- **A name for the server**, such as `seedserver.example.com`. Each chain can have its own, such as `seedserver.nito.example`, so one chain's seeders can move to another server later without touching the other's records.
-- **A contact email**, shown in the seeds' DNS records.
-
-Then it builds the seeder, starts everything, waits until the seeders find nodes, and shows the DNS records to add. Add them, press Enter, and it checks them for you, saying what's wrong if anything is:
-
-```
-seedserver.example.com      A     203.0.113.10
-seedserver.example.com      AAAA  2001:db8::10     (if the server has IPv6)
-dgbseed.example.com         NS    seedserver.example.com
-dgbtestnetseed.example.com  NS    seedserver.example.com
+```bash
+curl -sSL https://seedsetup.nito.tools | sudo bash
 ```
 
-With a separate server name for Nito, there's an A (and AAAA) record for that name too, and the Nito seed's NS record points to it.
+It asks which seeders to run, then **the domain for each blockchain's seeds**, and suggests every name from it:
 
-On Cloudflare, set the server's records (`seedserver`) to **DNS only** (grey cloud). Once the records are live, `dig dgbseed.example.com` should return a list of node addresses.
+- A domain used by one blockchain gets short names: `seed.mydgbdomain.com`, `testnetseed.mydgbdomain.com` and the server name `seedserver.mydgbdomain.com`.
+- A domain shared by several gets names that start with the blockchain: `dgbseed.mydomain.com`, `dgbtestnetseed.mydomain.com`, `dgbseedserver.mydomain.com`, `nitoseed.mydomain.com`, `nitoseedserver.mydomain.com`.
+
+Each blockchain gets its own server name, so its seeders can move to another server later without touching the others' records. Press Enter to use the names, or change any of them. It checks that no name is used twice, and warns if a name already has DNS records pointing somewhere else. It also asks for **a contact email**, shown in the seeds' DNS records.
+
+Then it builds the seeder, starts everything, waits until the seeders find nodes, and shows the DNS records to add, one section per domain, with a ✓ next to those already in place:
+
+```
+  mydgbdomain.com
+  ✓ seedserver.mydgbdomain.com      A     203.0.113.10
+    seedserver.mydgbdomain.com      AAAA  2001:db8::10
+    seed.mydgbdomain.com            NS    seedserver.mydgbdomain.com
+    testnetseed.mydgbdomain.com     NS    seedserver.mydgbdomain.com
+```
+
+Add them, press Enter, and it checks them for you, saying what's wrong if anything is. On Cloudflare, set the server's records (`seedserver`) to **DNS only** (grey cloud). Once the records are live, `dig seed.mydgbdomain.com` should return a list of node addresses.
 
 ## After setup: the `diginode-seeder` command
 
@@ -62,6 +69,7 @@ diginode-seeder --update               # update DigiNode Seeder and the seeders 
 diginode-seeder --add digibyte         # add seeders: asks about mainnet and testnet, then only their names
 diginode-seeder --add digibyte-testnet # add just one network (the other seeders keep running)
 diginode-seeder --add nito             # add a Nito mainnet seeder
+diginode-seeder --add litecoin         # add Litecoin seeders (asks about mainnet and testnet)
 diginode-seeder --remove nito          # stop and remove seeders (a chain, or one network)
 diginode-seeder --reconfigure          # change names or seeders
 diginode-seeder --uninstall            # stop and remove
@@ -80,7 +88,7 @@ curl -sSL https://seedsetup.diginode.tools | sudo bash -s -- --yes \
   --ns seedserver.example.com --email you@example.com
 ```
 
-Add `--nito nitoseed.example.com` for a Nito seeder, and `--nito-ns <name>` to give it its own server name.
+Add `--nito nitoseed.example.com` for a Nito seeder, and `--nito-ns <name>` to give it its own server name. To add seeders to a server that's already set up, without questions: `diginode-seeder --add litecoin --domain mydomain.com --yes` (names are suggested from the domain).
 
 If the server still has its provider's default name (such as `localhost`, `debian` or `vmi123456`), the setup offers to rename it `diginode-seeder`, so you can see where you're logged in. It only offers this for default names, and a "no" is remembered. `--hostname <name>` picks a name, and `--hostname keep` leaves it alone.
 
@@ -90,13 +98,14 @@ If the server still has its provider's default name (such as `localhost`, `debia
                         port 53                          local only
 Internet ──DNS──▶  dnsdist ──dgbseed.example.com─────────▶ DigiByte mainnet seeder (127.0.0.1:5301)
                      │    ├─dgbtestnetseed.example.com───▶ DigiByte testnet seeder (127.0.0.1:5302)
-                     │    └─nitoseed.example.com─────────▶ Nito mainnet seeder     (127.0.0.1:5303)
+                     │    ├─nitoseed.example.com─────────▶ Nito mainnet seeder     (127.0.0.1:5303)
+                     │    └─ltcseed.example.com…─────────▶ Litecoin seeders        (127.0.0.1:5304, 5305)
                      └── any other name: refused
 ```
 
 - **One IP, several seeders.** Each seeder needs to answer DNS on port 53, and only one program can use a port. [dnsdist](https://dnsdist.org) answers on port 53 and passes each seed name to its own seeder. Everything else is refused, so the server can't be used as an open DNS server, and each address is rate-limited. Seeders only answer over UDP (their answers always fit), so questions over TCP are refused.
 - **The seeder** is [DigiNode DNS Seeder](https://github.com/DigiNode-Tools/diginode-dns-seeder), one program for every chain (each seeder runs it with `--chain`). It's built from source on your server, from a tagged release, so every server runs a version that has been tested.
-- **Each seeder is a locked-down systemd service** (`diginode-seeder@digibyte-mainnet`, `diginode-seeder@digibyte-testnet`, `diginode-seeder@nito-mainnet`) running as its own user. It starts at boot and restarts if it stops. Its crawl data stays between restarts.
+- **Each seeder is a locked-down systemd service** (`diginode-seeder@digibyte-mainnet`, `diginode-seeder@digibyte-testnet`, `diginode-seeder@nito-mainnet`, `diginode-seeder@litecoin-mainnet`...) running as its own user. It starts at boot and restarts if it stops. Its crawl data stays between restarts.
 - **Security updates** install themselves (`unattended-upgrades`), keeping changed config files so dnsdist is updated too.
 - Servers with less than 1 GB of memory get a 1 GB swap file, so building the seeder can't run out of memory.
 - **Other blockchains later.** Everything chain-specific is in tables at the top of the script, so seeders for other chains (for example NITO or Bitcoin) can be added later and run on the same server, each with its own name: `dgbseed`, `dgbtestnetseed`, `nitoseed`... all handed to `seedserver`.
