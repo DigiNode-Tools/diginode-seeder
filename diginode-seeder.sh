@@ -49,7 +49,7 @@ SSH_KEY_URL="https://diginode.tools/linux-setup/#ssh-key"         # how to sign 
 # been tested, not whatever is on its main branch). Each seeder runs it with --chain <chain>.
 # ---------------------------------------------------------------------------
 SEEDER_REPO="https://github.com/DigiNode-Tools/diginode-dns-seeder.git"
-SEEDER_TAG="v0.3.1"
+SEEDER_TAG="v0.3.2"
 
 CHAINS=(digibyte nito litecoin)
 declare -A CHAIN_NAME=([digibyte]="DigiByte" [nito]="Nito" [litecoin]="Litecoin")
