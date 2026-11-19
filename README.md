@@ -134,7 +134,7 @@ The network only needs a handful of seeders, so it's best if each person runs no
 
 ### Before you ask
 
-- **Let it run for a few days** and check that it's still answering. The developers want seeds that stay up.
+- **Keep it running.** Once your seeds answer from the internet, you can ask straight away, but the developers want seeds that stay up, so only ask if you'll keep the server running.
 - **Check it from the internet**, from any computer:
   ```bash
   dig +short dgbseed.example.com        # a list of node addresses
