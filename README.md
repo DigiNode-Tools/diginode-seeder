@@ -36,6 +36,16 @@ curl -sSL https://seedsetup.nito.tools | sudo bash
 
 Each link sets up one blockchain: DigiByte (mainnet and/or testnet) from `seedsetup.diginode.tools`, Nito from `seedsetup.nito.tools`. The server remembers it, so later changes only ask about that blockchain. To run seeders for another blockchain on the same server too, add them with `diginode-seeder --add <chain>` (e.g. `--add litecoin`).
 
+### Straight from GitHub, for any blockchain
+
+The short links above just point to the latest release here on GitHub. To run it straight from GitHub instead, choose the blockchain with `--only`:
+
+```bash
+curl -sSL https://github.com/DigiNode-Tools/diginode-seeder-setup/releases/latest/download/diginode-seeder.sh | sudo bash -s -- --only <chain>
+```
+
+where `<chain>` is `digibyte`, `nito` or `litecoin`. Without `--only`, it sets up DigiByte.
+
 It asks which seeders to run, then **the domain for each blockchain's seeds**, and suggests every name from it:
 
 - A domain used by one blockchain gets short names: `seed.mydgbdomain.com`, `testnetseed.mydgbdomain.com` and the server name `seedserver.mydgbdomain.com`.
