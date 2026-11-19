@@ -22,19 +22,23 @@ It's part of [DigiNode Tools](https://diginode.tools). Guide: [DigiNode Seeder o
 
 ## Set up
 
-Log in to your server with SSH and run:
+Log in to your server with SSH and run the command for your blockchain. Each one sets up seeders for **that blockchain only** (mainnet and/or testnet): it doesn't offer the others.
+
+**DigiByte** seeders (no Nito or Litecoin offered):
 
 ```bash
 curl -sSL https://seedsetup.diginode.tools | sudo bash
 ```
 
-For Nito seeders, use:
+**Nito** seeders (no DigiByte or Litecoin offered):
 
 ```bash
 curl -sSL https://seedsetup.nito.tools | sudo bash
 ```
 
-Each link sets up one blockchain: DigiByte (mainnet and/or testnet) from `seedsetup.diginode.tools`, Nito from `seedsetup.nito.tools`. The server remembers it, so later changes only ask about that blockchain. To run seeders for another blockchain on the same server too, add them with `diginode-seeder --add <chain>` (e.g. `--add litecoin`).
+**Litecoin** seeders: use the GitHub command below, with `--only litecoin`.
+
+The server remembers its blockchain, so later changes only ask about that one. To run seeders for another blockchain on the same server too, add them with `diginode-seeder --add <chain>` (e.g. `diginode-seeder --add litecoin`).
 
 ### Straight from GitHub, for any blockchain
 
