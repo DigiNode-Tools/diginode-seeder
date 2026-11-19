@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.10"
+DGNS_VERSION="0.3.11"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -54,13 +54,13 @@ SEEDER_TAG="v0.3.1"
 CHAINS=(digibyte nito litecoin)
 declare -A CHAIN_NAME=([digibyte]="DigiByte" [nito]="Nito" [litecoin]="Litecoin")
 declare -A CHAIN_SHORT=([digibyte]="dgb" [nito]="nito" [litecoin]="ltc")   # for names in a domain shared by several chains
-declare -A CHAIN_NETWORKS=([digibyte]="mainnet testnet" [nito]="mainnet" [litecoin]="mainnet testnet")
-# Nito's testnet has no working seeds or fixed nodes (Nov 2026), so only Nito mainnet is offered.
+declare -A CHAIN_NETWORKS=([digibyte]="mainnet testnet" [nito]="mainnet testnet" [litecoin]="mainnet testnet")
 
 declare -A NET_LABEL=(
   [digibyte-mainnet]="DigiByte mainnet"
   [digibyte-testnet]="DigiByte testnet (v9, testnet26)"
   [nito-mainnet]="Nito mainnet"
+  [nito-testnet]="Nito testnet (testnet3)"
   [litecoin-mainnet]="Litecoin mainnet"
   [litecoin-testnet]="Litecoin testnet (testnet4)"
 )
@@ -68,6 +68,7 @@ declare -A NET_SHORT=(                      # short name for the status table
   [digibyte-mainnet]="DigiByte mainnet"
   [digibyte-testnet]="DigiByte testnet"
   [nito-mainnet]="Nito mainnet"
+  [nito-testnet]="Nito testnet"
   [litecoin-mainnet]="Litecoin mainnet"
   [litecoin-testnet]="Litecoin testnet"
 )
@@ -77,6 +78,7 @@ declare -A NET_ARGS=(                       # extra seeder arguments (after --ch
   # that are stuck or on their own fork (at block ~651,000 on 15 Nov 2026). Raise it now and then.
   [digibyte-testnet]="--testnet --minheight 600000"
   [nito-mainnet]=""
+  [nito-testnet]="--testnet"
   [litecoin-mainnet]=""
   [litecoin-testnet]="--testnet"
 )
@@ -84,6 +86,7 @@ declare -A NET_DNS_PORT=(                   # local port dnsdist forwards to
   [digibyte-mainnet]=5301
   [digibyte-testnet]=5302
   [nito-mainnet]=5303
+  [nito-testnet]=5306
   [litecoin-mainnet]=5304
   [litecoin-testnet]=5305
 )
@@ -91,6 +94,7 @@ declare -A NET_P2P_PORT=(                   # for information only
   [digibyte-mainnet]=12024
   [digibyte-testnet]=12033
   [nito-mainnet]=8820
+  [nito-testnet]=8840
   [litecoin-mainnet]=9333
   [litecoin-testnet]=19335
 )
@@ -98,6 +102,7 @@ declare -A NET_FILTER=(                     # a service filter the node software
   [digibyte-mainnet]="x9"
   [digibyte-testnet]="x9"
   [nito-mainnet]="x1000009"
+  [nito-testnet]="x1000009"
   [litecoin-mainnet]="x1000009"
   [litecoin-testnet]="x1000009"
 )
@@ -107,6 +112,7 @@ declare -A NET_SEED_PREFIX=(
   [digibyte-mainnet]="dgbseed"
   [digibyte-testnet]="dgbtestnetseed"
   [nito-mainnet]="nitoseed"
+  [nito-testnet]="nitotestnetseed"
   [litecoin-mainnet]="ltcseed"
   [litecoin-testnet]="ltctestnetseed"
 )
@@ -135,13 +141,14 @@ declare -A NET_CORE_LIST=(                  # the list in that file the seed goe
   [digibyte-mainnet]="mainnet list"
   [digibyte-testnet]="testnet list"
   [nito-mainnet]="mainnet list (CMainParams)"
+  [nito-testnet]="testnet list (CTestNetParams)"
   [litecoin-mainnet]="mainnet list (CMainParams)"
   [litecoin-testnet]="testnet list (CTestNetParams)"
 )
 # Where that list is in the file, for the AI prompt.
 declare -A CHAIN_CORE_WHERE=(
   [digibyte]=$'mainnet at the end of the list under\n   "// DigiByte MAINNET DNS Seed Server:", testnet at the end of the list under\n   "// DigiByte TESTNET DNS Seed Servers:"'
-  [nito]=$'in CMainParams, after the lines for\n   "seed.nito.network." and "seed.nitopool.online."'
+  [nito]=$'mainnet in CMainParams after the line for "seed.nitopool.online.",\n   testnet in CTestNetParams after the line for "testnet-seed.nito.network."'
   [litecoin]=$'mainnet in CMainParams after the line for "dnsseed.koin-project.com",\n   testnet in CTestNetParams after the line for "dnsseed-testnet.thrasher.io"'
 )
 declare -A CHAIN_CORE_RULES=(                # the project's commit and pull request rules, for the AI prompt
@@ -845,11 +852,14 @@ ask_settings() {
     title "Which seeders?"
     say "Each seeder needs its own name. One server can run them all."
   fi
-  local others="" c
-  for c in "${CHAINS[@]}"; do [[ " $offered " == *" $c "* ]] || others+="${others:+, }${CHAIN_NAME[$c]}"; done
+  local others="" c example=""
+  for c in "${CHAINS[@]}"; do
+    [[ " $offered " == *" $c "* ]] && continue
+    others+="${others:+, }${CHAIN_NAME[$c]}"; [[ -n $example ]] || example="$c"
+  done
   if [[ -n $others ]]; then
     say "${DIM}Seeders for other blockchains ($others) can be added later,"
-    say "e.g. with: diginode-seeder --add ${CHAINS[1]}${R}"
+    say "e.g. with: diginode-seeder --add $example${R}"
   fi
   for chain in $offered; do
     for net in ${CHAIN_NETWORKS[$chain]}; do
@@ -1573,9 +1583,7 @@ wait_for_dns() {
 # Adding or removing seeders (--add / --remove), leaving the others and every other setting as they are
 # ---------------------------------------------------------------------------
 # Networks a chain has but DigiNode Seeder doesn't support yet, and why.
-declare -A NET_NOT_YET=(
-  [nito-testnet]="Nito testnet support hasn't been added yet."
-)
+declare -A NET_NOT_YET=()
 
 # What was typed: a network id (digibyte-testnet) = just that one, or a chain (digibyte) = its networks.
 # Sets TARGET_IDS (the networks) and TARGET_CHAIN (non-empty when a whole chain was given).
