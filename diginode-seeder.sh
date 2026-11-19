@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.6"
+DGNS_VERSION="0.3.7"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -275,7 +275,7 @@ need_root() {
   if [[ $AS_COMMAND -eq 1 ]]; then
     # The installed command asks for administrator rights itself, so users never need to type sudo.
     command -v sudo >/dev/null || fail "This needs administrator rights. Log in as root and run it again."
-    exec sudo "$0" "${ORIG_ARGS[@]}"
+    exec sudo "$0" "${ORIG_ARGS[@]}" ${SSH_CONNECTION:+--ssh-session "$SSH_CONNECTION"}
   else fail "Please run it as root: curl -sSL https://seedsetup.diginode.tools | sudo bash"; fi
 }
 
@@ -413,7 +413,8 @@ apply_hostname() {
   if [[ -d /etc/cloud/cloud.cfg.d ]]; then
     printf '# Written by DigiNode Seeder: keep the server name it set (%s).\npreserve_hostname: true\n' "$NEW_HOSTNAME" > "$CLOUD_HOSTNAME_CONF"
   fi
-  ok "Server renamed from \"$old\" to \"$NEW_HOSTNAME\" (your prompt shows it after you log in again)"
+  ok "Server renamed from \"$old\" to \"$NEW_HOSTNAME\". Your prompt shows it in a new shell:"
+  say "    log in again, or type: exec bash -l"
 }
 
 # ---------------------------------------------------------------------------
@@ -601,10 +602,137 @@ check_names_in_use() { # check_names_in_use <id>...
 }
 
 # ---------------------------------------------------------------------------
+# SSH: turning password logins off, once the user logs in with a key
+#
+# Changing SSH settings could lock someone out, so: it's only offered when this session was opened with a key
+# (proof one works), it's done with a file of our own that's checked with sshd -t before SSH is reloaded (not
+# restarted, so sessions stay open), the user is told to test a new login before closing this one, and
+# --ssh-passwords on removes it again.
+# ---------------------------------------------------------------------------
+SSH_CONF_FILE="/etc/ssh/sshd_config.d/10-diginode-seeder.conf"   # 10-: sshd uses the first value it reads
+
+# Does SSH accept passwords? Prints yes, no or unknown (sshd -T needs root).
+ssh_passwords_state() {
+  local pa kbd
+  pa=$(sshd -T 2>/dev/null | awk '$1=="passwordauthentication"{print $2}' || true)
+  kbd=$(sshd -T 2>/dev/null | awk '$1=="kbdinteractiveauthentication"{print $2}' || true)
+  if [[ -z $pa ]]; then echo unknown
+  elif [[ $pa == yes || $kbd == yes ]]; then echo yes
+  else echo no; fi
+}
+
+# How this SSH session was opened: publickey, password, keyboard-interactive, or unknown. Found in SSH's log
+# from the session's own address and port (SSH_CONNECTION, or SSH_SESSION passed on through sudo).
+ssh_login_method() {
+  local conn="${SSH_SESSION:-${SSH_CONNECTION:-}}" ip port line=""
+  [[ -n $conn ]] || { echo unknown; return 0; }
+  ip=$(awk '{print $1}' <<<"$conn"); port=$(awk '{print $2}' <<<"$conn")
+  line=$(journalctl -q --no-pager -t sshd -t sshd-session -g "Accepted .* from $ip port $port " 2>/dev/null | tail -1 || true)
+  if [[ -z $line ]]; then
+    line=$(grep -h "Accepted .* from $ip port $port " /var/log/auth.log /var/log/secure 2>/dev/null | tail -1 || true)
+  fi
+  case "$line" in
+    *"Accepted publickey"*) echo publickey ;;
+    *"Accepted password"*) echo password ;;
+    *"Accepted keyboard-interactive"*) echo keyboard-interactive ;;
+    *) echo unknown ;;
+  esac
+}
+
+ssh_reload() {
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || systemctl reload-or-restart ssh 2>/dev/null
+}
+
+# For the status: one line about SSH logins, and (as root, in a terminal) the offer to turn passwords off.
+ssh_status() {
+  local state method
+  state=$(ssh_passwords_state)
+  case "$state" in
+    no) printf '  %b %s\n' "${GRN}✓${R}" "SSH: key logins only (passwords are off)"; return 0 ;;
+    unknown) return 0 ;;
+  esac
+  method=$(ssh_login_method)
+  if [[ $method == publickey ]]; then
+    printf '  %b %s\n' "${YLW}!${R}" "SSH accepts passwords. You logged in with a key, so they can be turned"
+    printf '    %s\n' "off: diginode-seeder --ssh-passwords off"
+    # Offer it once (a no is remembered).
+    if [[ $EUID -eq 0 && $ASSUME_YES -eq 0 && ${SSH_PW_ASKED:-} != no ]] && has_tty; then
+      say ""
+      if confirm "Turn off password logins now?" n; then
+        ssh_passwords_off || true
+      else
+        SSH_PW_ASKED=no; write_settings_file
+        say "OK, not now. You can do it later with: diginode-seeder --ssh-passwords off"
+      fi
+    fi
+  else
+    printf '  %b %s\n' "${YLW}!${R}" "SSH accepts passwords. Safer: log in with an SSH key instead. Once you"
+    printf '    %s\n' "do, this can turn passwords off. How to set up a key:" "$SSH_KEY_URL"
+  fi
+}
+
+ssh_passwords_off() {
+  need_root
+  [[ $(ssh_passwords_state) != no ]] || { ok "SSH already accepts key logins only."; return 0; }
+  local method; method=$(ssh_login_method)
+  if [[ $method != publickey ]]; then
+    warn "This session wasn't opened with an SSH key ($method), so turning passwords off"
+    say "    could lock you out. Set up a key and log in with it first:"
+    say "    $SSH_KEY_URL"
+    return 1
+  fi
+  if ! sshd -T 2>/dev/null >/dev/null || ! grep -qsE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
+    warn "This server's SSH settings don't read /etc/ssh/sshd_config.d, so it can't be done safely here."
+    say "    Turn passwords off by hand: set PasswordAuthentication no in /etc/ssh/sshd_config."
+    return 1
+  fi
+  install -d -m 755 /etc/ssh/sshd_config.d
+  cat > "$SSH_CONF_FILE" <<EOF
+# Written by DigiNode Seeder: SSH key logins only (root too, with a key).
+# Turn passwords back on with: diginode-seeder --ssh-passwords on
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+EOF
+  chmod 644 "$SSH_CONF_FILE"
+  if ! sshd -t 2>/dev/null; then
+    rm -f "$SSH_CONF_FILE"
+    warn "SSH didn't accept the new settings, so nothing was changed."
+    return 1
+  fi
+  ssh_reload || { rm -f "$SSH_CONF_FILE"; warn "Couldn't reload SSH, so nothing was changed."; return 1; }
+  if [[ $(ssh_passwords_state) == no ]]; then
+    ok "Password logins are off. SSH now only accepts keys (your session stays open)."
+    say ""
+    say "  ${B}Before you close this window:${R} open a new terminal and log in again, to check"
+    say "  your key works. If it doesn't, turn passwords back on from here with:"
+    say "    diginode-seeder --ssh-passwords on"
+  else
+    warn "SSH still accepts passwords: another setting overrides this one. Nothing else was changed."
+  fi
+}
+
+ssh_passwords_on() {
+  need_root
+  if [[ ! -f $SSH_CONF_FILE ]]; then
+    if [[ $(ssh_passwords_state) == no ]]; then
+      warn "Passwords were turned off by something other than DigiNode Seeder, so it leaves them as they are."
+    else
+      ok "SSH already accepts passwords."
+    fi
+    return 0
+  fi
+  rm -f "$SSH_CONF_FILE"
+  sshd -t 2>/dev/null && ssh_reload
+  if [[ $(ssh_passwords_state) == yes ]]; then ok "Password logins are on again."
+  else ok "DigiNode Seeder's setting is removed (another setting still keeps passwords off)."; fi
+}
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 load_settings() {
-  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; AUTO_UPDATES=""; AUTO_RESTART=""; FIREWALL=""; RENAME_HOST=""; ONLY_CHAINS=""; ENABLED=()
+  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; AUTO_UPDATES=""; AUTO_RESTART=""; FIREWALL=""; RENAME_HOST=""; ONLY_CHAINS=""; SSH_PW_ASKED=""; ENABLED=()
   declare -gA SEED_HOST=() SERVER_HOST=()
   local chain var
   for chain in "${CHAINS[@]}"; do unset "NS_HOST_$chain"; done
@@ -652,6 +780,7 @@ AUTO_UPDATES="${AUTO_UPDATES:-yes}"
 AUTO_RESTART="${AUTO_RESTART:-yes}"
 FIREWALL="${FIREWALL:-}"
 RENAME_HOST="${RENAME_HOST:-}"
+SSH_PW_ASKED="${SSH_PW_ASKED:-}"
 # The blockchains this server is set up for: one at first (DigiByte, or Nito from seedsetup.nito.tools);
 # diginode-seeder --add <chain> adds another.
 ONLY_CHAINS="$(only_chains_to_save)"
@@ -667,6 +796,7 @@ keep_saved_extras() {
   [[ -n $AUTO_RESTART ]] || AUTO_RESTART=$(sed -n 's/^AUTO_RESTART="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $FIREWALL ]] || FIREWALL=$(sed -n 's/^FIREWALL="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $ONLY_CHAINS ]] || ONLY_CHAINS=$(sed -n 's/^ONLY_CHAINS="\(.*\)"$/\1/p' "$CONF_DIR/settings")
+  [[ -n $SSH_PW_ASKED ]] || SSH_PW_ASKED=$(sed -n 's/^SSH_PW_ASKED="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $RENAME_HOST ]] || RENAME_HOST=$(sed -n 's/^RENAME_HOST="\(.*\)"$/\1/p' "$CONF_DIR/settings")
 }
 
@@ -1192,10 +1322,7 @@ security_status() {
   else
     printf '  %b %s\n' "${YLW}!${R}" "Firewall: off (turn on: diginode-seeder --firewall on)"
   fi
-  if [[ $(sshd -T 2>/dev/null | awk '$1=="passwordauthentication"{print $2}') == yes ]]; then
-    printf '  %b %s\n' "${YLW}!${R}" "SSH accepts passwords. Safer: sign in with an SSH key, then turn"
-    printf '    %s\n' "passwords off. How: $SSH_KEY_URL"
-  fi
+  ssh_status
 }
 
 # A fingerprint of everything a service runs with, so an update only restarts
@@ -1641,9 +1768,14 @@ do_setup() {
   say "    ${B}$(cmd_hint)${R} shows the line to add. How:"
   say "    ${GUIDE_URL}#add-to-digibyte-core"
   [[ -x $CMD_LINK ]] && say "  - All commands:   ${B}diginode-seeder --help${R}"
-  if [[ $(sshd -T 2>/dev/null | awk '$1=="passwordauthentication"{print $2}') == yes ]]; then
-    say "  - SSH still accepts passwords. Safer: sign in with an SSH key, then turn"
-    say "    passwords off. How: $SSH_KEY_URL"
+  if [[ $(ssh_passwords_state) == yes ]]; then
+    if [[ $(ssh_login_method) == publickey ]]; then
+      say "  - SSH still accepts passwords. You logged in with a key, so turn them off:"
+      say "    ${B}diginode-seeder --ssh-passwords off${R}"
+    else
+      say "  - SSH still accepts passwords. Safer: log in with an SSH key, then"
+      say "    ${B}diginode-seeder${R} offers to turn passwords off. How: $SSH_KEY_URL"
+    fi
   fi
   return 0
 }
@@ -1930,6 +2062,8 @@ Usage: diginode-seeder [option]
   --auto-updates on|off  Install security updates automatically (default: on)
   --auto-restart on|off  Restart at 03:30 when an update needs it (default: on)
   --firewall on|off      A firewall that only lets in SSH and DNS
+  --ssh-passwords on|off SSH password logins (off = SSH keys only; offered only
+                         when you logged in with a key, so you can't lock yourself out)
   --uninstall            Stop and remove the seeders (keeps their data)
   --version              Show the version
   --help                 Show this text
@@ -2027,6 +2161,8 @@ main() {
       --auto-updates) on_off "$1" "${2:-}"; CLI_UPDATES=$ONOFF; shift ;;
       --auto-restart) on_off "$1" "${2:-}"; CLI_RESTART=$ONOFF; shift ;;
       --firewall) on_off "$1" "${2:-}"; CLI_FIREWALL=$ONOFF; shift ;;
+      --ssh-passwords) on_off "$1" "${2:-}"; cmd="ssh-$ONOFF"; shift ;;
+      --ssh-session) SSH_SESSION="${2:-}"; shift ;;   # internal: SSH_CONNECTION, passed on through sudo
       --yes|-y) ASSUME_YES=1 ;;
       --help|-h) usage; exit 0 ;;
       *) usage; fail "Unknown option: $1" ;;
@@ -2039,6 +2175,8 @@ main() {
     aiprompt) do_ai_prompt; return ;;
     update) do_update; return ;;
     uninstall) do_uninstall; return ;;
+    ssh-no) load_settings || true; ssh_passwords_off || exit 1; return ;;
+    ssh-yes) load_settings || true; ssh_passwords_on || exit 1; return ;;
   esac
   # Just --motd / --auto-updates / --auto-restart / --firewall, on a server that's set up: change only those.
   if [[ -n $CLI_MOTD$CLI_UPDATES$CLI_RESTART$CLI_FIREWALL && -z $cli_main$cli_test$cli_nito && $RECONFIGURE -eq 0 && -r $CONF_DIR/settings ]]; then
