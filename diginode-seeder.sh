@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.7"
+DGNS_VERSION="0.3.8"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -175,12 +175,14 @@ if [[ -t 1 ]]; then
 else
   B=""; DIM=""; RED=""; GRN=""; YLW=""; CYN=""; R=""
 fi
-say()   { printf '%s\n' "$*"; }
-info()  { printf '%s[i]%s %s\n' "$CYN" "$R" "$*"; }
-ok()    { printf '%s[✓]%s %s\n' "$GRN" "$R" "$*"; }
-warn()  { printf '%s[!]%s %s\n' "$YLW" "$R" "$*"; }
-fail()  { printf '%s[✗]%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
-title() { printf '\n%s%s%s\n' "$B" "$*" "$R"; }
+# BLANK=1 when the last line printed was empty, so a run starts and ends with one empty line, never two.
+BLANK=0
+say()   { printf '%s\n' "$*"; if [[ -z $* ]]; then BLANK=1; else BLANK=0; fi; }
+info()  { printf '%s[i]%s %s\n' "$CYN" "$R" "$*"; BLANK=0; }
+ok()    { printf '%s[✓]%s %s\n' "$GRN" "$R" "$*"; BLANK=0; }
+warn()  { printf '%s[!]%s %s\n' "$YLW" "$R" "$*"; BLANK=0; }
+fail()  { printf '%s[✗]%s %s\n' "$RED" "$R" "$*" >&2; BLANK=0; exit 1; }
+title() { [[ $BLANK -eq 1 ]] || printf '\n'; printf '%s%s%s\n' "$B" "$*" "$R"; BLANK=0; }
 
 # The DigiNode logo, as in DigiNode Tools' login message.
 show_logo() {
@@ -275,7 +277,7 @@ need_root() {
   if [[ $AS_COMMAND -eq 1 ]]; then
     # The installed command asks for administrator rights itself, so users never need to type sudo.
     command -v sudo >/dev/null || fail "This needs administrator rights. Log in as root and run it again."
-    exec sudo "$0" "${ORIG_ARGS[@]}" ${SSH_CONNECTION:+--ssh-session "$SSH_CONNECTION"}
+    exec sudo "$0" "${ORIG_ARGS[@]}" --started ${SSH_CONNECTION:+--ssh-session "$SSH_CONNECTION"}
   else fail "Please run it as root: curl -sSL https://seedsetup.diginode.tools | sudo bash"; fi
 }
 
@@ -1678,7 +1680,6 @@ add_hint() { # add_hint <id>
 # Commands
 # ---------------------------------------------------------------------------
 do_setup() {
-  say ""
   show_logo
   say ""
   say "  ${B}DigiNode Seeder $DGNS_VERSION${R}: DNS seeders help new nodes find the network."
@@ -1757,26 +1758,25 @@ do_setup() {
     wait_for_dns && dns_ok=1
   fi
   title "All done. What's next"
+  # Each step: what to do (one or more lines), then its command on its own line.
+  step() { local cmd="$1" line; shift; say ""; for line in "$@"; do say "  $line"; done; [[ -z $cmd ]] || say "    ${B}$cmd${R}"; }
   if [[ $dns_ok -eq 0 ]]; then
-    say "  - Add the DNS records above, then check them:   ${B}$(cmd_hint --dns)${R}"
+    step "$(cmd_hint --dns)" "Add the DNS records above, then check them:"
   fi
-  say "  - See how it's doing, now and then:              ${B}$(cmd_hint)${R}"
-  say "  - Update it (keeps your settings):               ${B}$(cmd_hint --update)${R}"
+  step "$(cmd_hint)" "See how it's doing, now and then:"
+  step "$(cmd_hint --update)" "Update it (keeps your settings):"
   local cores=""; for c in $(enabled_chains); do cores+="${cores:+ and }${CHAIN_CORE_NAME[$c]}"; done
-  say "  - After a few days, ask for your seeds to be added to the node software"
-  say "    ($cores), so nodes start using them."
-  say "    ${B}$(cmd_hint)${R} shows the line to add. How:"
-  say "    ${GUIDE_URL}#add-to-digibyte-core"
-  [[ -x $CMD_LINK ]] && say "  - All commands:   ${B}diginode-seeder --help${R}"
+  step "$(cmd_hint --ai-prompt)" "In a few days, ask for your seeds to be added to $cores," \
+       "so nodes start using them. Your AI assistant can do it for you:"
   if [[ $(ssh_passwords_state) == yes ]]; then
     if [[ $(ssh_login_method) == publickey ]]; then
-      say "  - SSH still accepts passwords. You logged in with a key, so turn them off:"
-      say "    ${B}diginode-seeder --ssh-passwords off${R}"
+      step "diginode-seeder --ssh-passwords off" "SSH still accepts passwords. You logged in with a key, so turn them off:"
     else
-      say "  - SSH still accepts passwords. Safer: log in with an SSH key, then"
-      say "    ${B}diginode-seeder${R} offers to turn passwords off. How: $SSH_KEY_URL"
+      step "" "SSH still accepts passwords. Safer: log in with an SSH key, and then" \
+           "diginode-seeder offers to turn passwords off. How to set up a key:" "$SSH_KEY_URL"
     fi
   fi
+  [[ -x $CMD_LINK ]] && step "diginode-seeder --help" "All commands:"
   return 0
 }
 
@@ -2010,7 +2010,7 @@ do_update() {
   else
     ok "New version: DigiNode Seeder $newver (you have $DGNS_VERSION)."
   fi
-  exec bash "$tmp" --yes
+  exec bash "$tmp" --yes --started
 }
 
 do_uninstall() {
@@ -2121,6 +2121,11 @@ main() {
   # Run as the installed diginode-seeder command: no option = status. Run from curl (or a file): no option = set up.
   AS_COMMAND=0; [[ $(basename "$0") == diginode-seeder ]] && AS_COMMAND=1
   ORIG_ARGS=("$@")
+  # An empty line before the first output and after the last (a copy started by sudo or an update has had
+  # its first one already).
+  if [[ " $* " != *" --started "* ]]; then printf '\n'; fi
+  BLANK=1
+  trap '[[ $BLANK -eq 1 ]] || printf "\n"' EXIT
   local cmd=setup
   [[ $AS_COMMAND -eq 1 && $# -eq 0 ]] && cmd=status
   RECONFIGURE=0; CLI_SET=0
@@ -2136,7 +2141,7 @@ main() {
       --dns) cmd=dns ;;
       --ai-prompt) cmd=aiprompt ;;
       --update) cmd=update ;;
-      --version|-v) echo "DigiNode Seeder $DGNS_VERSION"; exit 0 ;;
+      --version|-v) say "DigiNode Seeder $DGNS_VERSION"; exit 0 ;;
       --uninstall) cmd=uninstall ;;
       --reconfigure) RECONFIGURE=1 ;;
       --add) ADD_NET="${2:-}"; [[ -n $ADD_NET ]] || fail "Which network? e.g. --add nito"; shift ;;
@@ -2162,9 +2167,10 @@ main() {
       --auto-restart) on_off "$1" "${2:-}"; CLI_RESTART=$ONOFF; shift ;;
       --firewall) on_off "$1" "${2:-}"; CLI_FIREWALL=$ONOFF; shift ;;
       --ssh-passwords) on_off "$1" "${2:-}"; cmd="ssh-$ONOFF"; shift ;;
-      --ssh-session) SSH_SESSION="${2:-}"; shift ;;   # internal: SSH_CONNECTION, passed on through sudo
+      --ssh-session) SSH_SESSION="${2:-}"; shift ;;
+      --started) ;;   # internal: handed over by sudo or an update, so the first empty line is printed already   # internal: SSH_CONNECTION, passed on through sudo
       --yes|-y) ASSUME_YES=1 ;;
-      --help|-h) usage; exit 0 ;;
+      --help|-h) usage; BLANK=0; exit 0 ;;
       *) usage; fail "Unknown option: $1" ;;
     esac
     shift
