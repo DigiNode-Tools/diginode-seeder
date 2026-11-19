@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.4"
+DGNS_VERSION="0.3.5"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -50,22 +50,27 @@ SSH_KEY_URL="https://diginode.tools/linux-setup/#ssh-key"         # how to sign 
 # been tested, not whatever is on its main branch). Each seeder runs it with --chain <chain>.
 # ---------------------------------------------------------------------------
 SEEDER_REPO="https://github.com/DigiNode-Tools/diginode-dns-seeder.git"
-SEEDER_TAG="v0.2.1"
+SEEDER_TAG="v0.3.0"
 
-CHAINS=(digibyte nito)
-declare -A CHAIN_NAME=([digibyte]="DigiByte" [nito]="Nito")
-declare -A CHAIN_NETWORKS=([digibyte]="mainnet testnet" [nito]="mainnet")
+CHAINS=(digibyte nito litecoin)
+declare -A CHAIN_NAME=([digibyte]="DigiByte" [nito]="Nito" [litecoin]="Litecoin")
+declare -A CHAIN_SHORT=([digibyte]="dgb" [nito]="nito" [litecoin]="ltc")   # for names in a domain shared by several chains
+declare -A CHAIN_NETWORKS=([digibyte]="mainnet testnet" [nito]="mainnet" [litecoin]="mainnet testnet")
 # Nito's testnet has no working seeds or fixed nodes (Nov 2026), so only Nito mainnet is offered.
 
 declare -A NET_LABEL=(
   [digibyte-mainnet]="DigiByte mainnet"
   [digibyte-testnet]="DigiByte testnet (v9, testnet26)"
   [nito-mainnet]="Nito mainnet"
+  [litecoin-mainnet]="Litecoin mainnet"
+  [litecoin-testnet]="Litecoin testnet (testnet4)"
 )
 declare -A NET_SHORT=(                      # short name for the status table
   [digibyte-mainnet]="DigiByte mainnet"
   [digibyte-testnet]="DigiByte testnet"
   [nito-mainnet]="Nito mainnet"
+  [litecoin-mainnet]="Litecoin mainnet"
+  [litecoin-testnet]="Litecoin testnet"
 )
 declare -A NET_ARGS=(                       # extra seeder arguments (after --chain <chain>)
   [digibyte-mainnet]=""
@@ -73,21 +78,29 @@ declare -A NET_ARGS=(                       # extra seeder arguments (after --ch
   # that are stuck or on their own fork (at block ~651,000 on 15 Nov 2026). Raise it now and then.
   [digibyte-testnet]="--testnet --minheight 600000"
   [nito-mainnet]=""
+  [litecoin-mainnet]=""
+  [litecoin-testnet]="--testnet"
 )
 declare -A NET_DNS_PORT=(                   # local port dnsdist forwards to
   [digibyte-mainnet]=5301
   [digibyte-testnet]=5302
   [nito-mainnet]=5303
+  [litecoin-mainnet]=5304
+  [litecoin-testnet]=5305
 )
 declare -A NET_P2P_PORT=(                   # for information only
   [digibyte-mainnet]=12024
   [digibyte-testnet]=12033
   [nito-mainnet]=8820
+  [litecoin-mainnet]=9333
+  [litecoin-testnet]=19335
 )
 declare -A NET_FILTER=(                     # a service filter the node software asks for, for the AI prompt's check
   [digibyte-mainnet]="x9"
   [digibyte-testnet]="x9"
   [nito-mainnet]="x1000009"
+  [litecoin-mainnet]="x1000009"
+  [litecoin-testnet]="x1000009"
 )
 # Suggested seed names start with the chain, so seeders for several chains can share the server
 # (dgbseed, dgbtestnetseed, nitoseed...).
@@ -95,6 +108,8 @@ declare -A NET_SEED_PREFIX=(
   [digibyte-mainnet]="dgbseed"
   [digibyte-testnet]="dgbtestnetseed"
   [nito-mainnet]="nitoseed"
+  [litecoin-mainnet]="ltcseed"
+  [litecoin-testnet]="ltctestnetseed"
 )
 # Chains offered by default on a new server (others are asked with "no" as the default).
 DEFAULT_CHAINS="digibyte"
@@ -102,32 +117,38 @@ DEFAULT_CHAINS="digibyte"
 # one chain's seeders can later move to another server without changing the other's records.
 SERVER_PREFIX="seedserver"
 # Where the chain's node software lists its seeds, for the "add it to DigiByte Core / Nito Core" step.
-declare -A CHAIN_CORE_NAME=([digibyte]="DigiByte Core" [nito]="Nito Core")
-declare -A CHAIN_CORE_REPO=([digibyte]="DigiByte-Core/digibyte" [nito]="NitoNetwork/Nito-core")
-declare -A CHAIN_CORE_BRANCH=([digibyte]="develop branch" [nito]="default branch")
-declare -A CHAIN_CORE_FILE=([digibyte]="src/kernel/chainparams.cpp" [nito]="src/kernel/chainparams.cpp")
+declare -A CHAIN_CORE_NAME=([digibyte]="DigiByte Core" [nito]="Nito Core" [litecoin]="Litecoin Core")
+declare -A CHAIN_CORE_REPO=([digibyte]="DigiByte-Core/digibyte" [nito]="NitoNetwork/Nito-core" [litecoin]="litecoin-project/litecoin")
+declare -A CHAIN_CORE_BRANCH=([digibyte]="develop branch" [nito]="default branch" [litecoin]="master branch")
+declare -A CHAIN_CORE_FILE=([digibyte]="src/kernel/chainparams.cpp" [nito]="src/kernel/chainparams.cpp" [litecoin]="src/chainparams.cpp")
 declare -A CHAIN_CORE_RAW=(
   [digibyte]="https://raw.githubusercontent.com/DigiByte-Core/digibyte/develop/src/kernel/chainparams.cpp"
   [nito]="https://raw.githubusercontent.com/NitoNetwork/Nito-core/HEAD/src/kernel/chainparams.cpp"
+  [litecoin]="https://raw.githubusercontent.com/litecoin-project/litecoin/master/src/chainparams.cpp"
 )
 # The line to add, as a printf format: seed name, then your name and GitHub handle (if the chain uses them).
 declare -A CHAIN_CORE_LINE=(
   [digibyte]='vSeeds.emplace_back("%s"); // %s @%s'
   [nito]='vSeeds.emplace_back("%s.");%.0s%.0s'     # Nito Core's lines have no name or handle
+  [litecoin]='vSeeds.emplace_back("%s");%.0s%.0s'  # nor do Litecoin Core's
 )
 declare -A NET_CORE_LIST=(                  # the list in that file the seed goes into
   [digibyte-mainnet]="mainnet list"
   [digibyte-testnet]="testnet list"
   [nito-mainnet]="mainnet list (CMainParams)"
+  [litecoin-mainnet]="mainnet list (CMainParams)"
+  [litecoin-testnet]="testnet list (CTestNetParams)"
 )
 # Where that list is in the file, for the AI prompt.
 declare -A CHAIN_CORE_WHERE=(
   [digibyte]=$'mainnet at the end of the list under\n   "// DigiByte MAINNET DNS Seed Server:", testnet at the end of the list under\n   "// DigiByte TESTNET DNS Seed Servers:"'
   [nito]=$'in CMainParams, after the lines for\n   "seed.nito.network." and "seed.nitopool.online."'
+  [litecoin]=$'mainnet in CMainParams after the line for "dnsseed.koin-project.com",\n   testnet in CTestNetParams after the line for "dnsseed-testnet.thrasher.io"'
 )
 declare -A CHAIN_CORE_RULES=(                # the project's commit and pull request rules, for the AI prompt
   [digibyte]=$'Commit message: like "net: Add <seed name> DNS seed", with no @ mentions\n     (DigiByte\'s contribution rules). Title: starts with "net:".'
   [nito]='Commit message and title: like "Add <seed name> DNS seed".'
+  [litecoin]='Commit message and title: like "Add <seed name> DNS seed".'
 )
 
 # The server name each chain's seeds are handed to (set from the settings).
@@ -396,6 +417,190 @@ apply_hostname() {
 }
 
 # ---------------------------------------------------------------------------
+# Names: one domain per chain, and every seed and server name suggested from it
+#
+# A domain used by one chain gets short names (seed., testnetseed., seedserver.); a domain shared by several
+# chains gets names that start with the chain (dgbseed., nitoseed., dgbseedserver.). Names already in use by
+# this server's seeders are kept.
+# ---------------------------------------------------------------------------
+declare -A CHAIN_DOMAIN=()
+
+name_domain() { printf '%s' "${1#*.}"; }   # name_domain <name>: everything after the first label
+
+# The domain a chain uses now (from its server name, or its first seed name), or nothing.
+current_domain() { # current_domain <chain>
+  local chain="$1" id
+  if [[ -n ${SERVER_HOST[$chain]:-} ]]; then name_domain "${SERVER_HOST[$chain]}"; return 0; fi
+  for id in "${ENABLED[@]}"; do
+    if [[ ${id%%-*} == "$chain" && -n ${SEED_HOST[$id]:-} ]]; then name_domain "${SEED_HOST[$id]}"; return 0; fi
+  done
+  return 0
+}
+
+# short or prefixed names for a chain in a domain.
+name_style() { # name_style <chain> <domain>
+  local chain="$1" domain="$2" id c first
+  # Keep the style its existing names in that domain use.
+  for id in "${ENABLED[@]}"; do
+    [[ ${id%%-*} == "$chain" && -n ${SEED_HOST[$id]:-} && $(name_domain "${SEED_HOST[$id]}") == "$domain" ]] || continue
+    first="${SEED_HOST[$id]%%.*}"
+    if [[ $first == "${CHAIN_SHORT[$chain]}"* ]]; then echo prefixed; else echo short; fi
+    return 0
+  done
+  # Otherwise: prefixed if another chain on this server uses the same domain.
+  for c in $(enabled_chains); do
+    [[ $c != "$chain" && ${CHAIN_DOMAIN[$c]:-$(current_domain "$c")} == "$domain" ]] && { echo prefixed; return 0; }
+  done
+  echo short
+}
+
+# The suggested seed name for a network, and server name for a chain, in a domain.
+suggest_seed() { # suggest_seed <id> <domain>
+  local id="$1" domain="$2"
+  if [[ $(name_style "${id%%-*}" "$domain") == prefixed ]]; then printf '%s.%s' "${NET_SEED_PREFIX[$id]}" "$domain"
+  elif [[ ${id#*-} == mainnet ]]; then printf 'seed.%s' "$domain"
+  else printf '%s.%s' "${id#*-}seed" "$domain"; fi              # testnet -> testnetseed.
+}
+suggest_server() { # suggest_server <chain> <domain>
+  local chain="$1" domain="$2"
+  if [[ $(name_style "$chain" "$domain") == prefixed ]]; then printf '%s%s.%s' "${CHAIN_SHORT[$chain]}" "$SERVER_PREFIX" "$domain"
+  else printf '%s.%s' "$SERVER_PREFIX" "$domain"; fi
+}
+
+valid_domain() { valid_hostname "$1" && [[ $1 == *.* ]]; }
+
+# Ask each chain's domain (default: what it uses now, or the domain given for the chain before it).
+ask_domains() { # ask_domains <chain>...
+  local chain def last=""
+  title "Domains"
+  say "Each blockchain's seeds get names in a domain you control, where you can add"
+  say "DNS records. Several blockchains can share one domain."
+  for chain in "$@"; do
+    def="${CHAIN_DOMAIN[$chain]:-$(current_domain "$chain")}"
+    [[ -n $def ]] || def="$last"
+    [[ -n $def ]] || def=$(current_domain "$(enabled_chains | head -1)")
+    while :; do
+      ask "Domain for your ${CHAIN_NAME[$chain]} seeds (e.g. example.com)" "$def"
+      valid_domain "$REPLY" && break
+      warn "That isn't a valid domain."
+    done
+    CHAIN_DOMAIN[$chain]="${REPLY,,}"; last="${REPLY,,}"
+  done
+}
+
+# Fill in names from the domains for the given networks (and their chains' server names), keeping names
+# already in use in the same domain.
+suggest_names() { # suggest_names <id>...
+  local id chain domain
+  for id in "$@"; do
+    chain="${id%%-*}"; domain="${CHAIN_DOMAIN[$chain]}"
+    if [[ -z ${SEED_HOST[$id]:-} || $(name_domain "${SEED_HOST[$id]}") != "$domain" ]]; then
+      SEED_HOST[$id]=$(suggest_seed "$id" "$domain")
+    fi
+    if [[ -z ${SERVER_HOST[$chain]:-} || $(name_domain "${SERVER_HOST[$chain]}") != "$domain" ]]; then
+      SERVER_HOST[$chain]=$(suggest_server "$chain" "$domain")
+    fi
+  done
+}
+
+# Are all the names usable? Prints what's wrong and returns 1 if not.
+names_ok() {
+  local id other chain host bad=0
+  for id in "${ENABLED[@]}"; do
+    valid_hostname "${SEED_HOST[$id]}" || { warn "\"${SEED_HOST[$id]}\" isn't a valid name."; bad=1; }
+    for other in "${ENABLED[@]}"; do
+      [[ $other != "$id" && ${SEED_HOST[$other]} == "${SEED_HOST[$id]}" && $other > $id ]] \
+        && { warn "${NET_LABEL[$id]} and ${NET_LABEL[$other]} can't both use ${SEED_HOST[$id]}."; bad=1; }
+    done
+  done
+  for chain in $(enabled_chains); do
+    host=$(ns_host "$chain")
+    valid_hostname "$host" || { warn "\"$host\" isn't a valid name."; bad=1; }
+    for id in "${ENABLED[@]}"; do
+      if [[ $host == "${SEED_HOST[$id]}" || $host == *".${SEED_HOST[$id]}" ]]; then
+        warn "The server name $host can't be the seed name ${SEED_HOST[$id]} or inside it."; bad=1
+      fi
+    done
+  done
+  return $bad
+}
+
+# Show the names for these networks (and their chains' server names). Asks "Use these names?"; a no lets each
+# be changed. Repeats until they're all usable.
+review_names() { # review_names <id>...
+  local id chain shown="" interactive=0
+  [[ $ASSUME_YES -eq 0 ]] && has_tty && interactive=1
+  while :; do
+    title "Names"
+    for id in "$@"; do printf '  %-26s %s\n' "${NET_SHORT[$id]} seed" "${SEED_HOST[$id]}"; done
+    shown=""
+    for id in "$@"; do
+      chain="${id%%-*}"; [[ " $shown " == *" $chain "* ]] && continue; shown+=" $chain"
+      printf '  %-26s %s\n' "${CHAIN_NAME[$chain]} server name" "$(ns_host "$chain")"
+    done
+    say ""
+    say "  The seed names are what nodes look up. Each server name points at this server,"
+    say "  and its seeds are handed to it."
+    if names_ok; then
+      [[ $interactive -eq 1 ]] || return 0
+      confirm "Use these names?" y && { check_names_in_use "$@" && return 0; }
+    else
+      [[ $interactive -eq 1 ]] || fail "Fix the names above and try again."
+    fi
+    # Change them one by one (Enter keeps each).
+    shown=""
+    for id in "$@"; do
+      while :; do ask "${NET_SHORT[$id]} seed" "${SEED_HOST[$id]}"; valid_hostname "$REPLY" && break; warn "That isn't a valid name."; done
+      SEED_HOST[$id]="${REPLY,,}"
+    done
+    for id in "$@"; do
+      chain="${id%%-*}"; [[ " $shown " == *" $chain "* ]] && continue; shown+=" $chain"
+      while :; do ask "${CHAIN_NAME[$chain]} server name" "$(ns_host "$chain")"; valid_hostname "$REPLY" && break; warn "That isn't a valid name."; done
+      SERVER_HOST[$chain]="${REPLY,,}"
+    done
+  done
+}
+
+# Names saved before this run: they're ours already, so their records are expected.
+declare -A OWN_NAMES=()
+remember_own_names() {
+  local id c
+  for id in "${ENABLED[@]}"; do [[ -n ${SEED_HOST[$id]:-} ]] && OWN_NAMES[${SEED_HOST[$id]}]=1; done
+  for c in $(enabled_chains); do [[ -n $(ns_host "$c") ]] && OWN_NAMES[$(ns_host "$c")]=1; done
+  return 0
+}
+
+# Warn about new names that already have DNS records pointing somewhere else. Returns 1 if the user wants to
+# change them.
+check_names_in_use() { # check_names_in_use <id>...
+  local id chain name found="" a cname shown=""
+  local names=()
+  for id in "$@"; do names+=("seed:${SEED_HOST[$id]}"); done
+  for id in "$@"; do chain="${id%%-*}"; [[ " $shown " == *" $chain "* ]] || { shown+=" $chain"; names+=("server:$(ns_host "$chain")"); }; done
+  for name in "${names[@]}"; do
+    local kind="${name%%:*}" n="${name#*:}"
+    [[ -n ${OWN_NAMES[$n]:-} ]] && continue
+    cname=$(dig +short +time=2 +tries=1 @1.1.1.1 "$n" CNAME 2>/dev/null | head -1)
+    if [[ -n $cname ]]; then found+="    $n is a CNAME for ${cname%.}"$'\n'; continue; fi
+    if [[ $kind == seed ]]; then
+      find_delegation "$n"
+      if [[ -n $DELEG_NS ]] && ! points_here "$DELEG_IPS"; then found+="    $n is already handed to $(head -1 <<<"$DELEG_NS")"$'\n'; continue; fi
+      [[ -n $DELEG_NS ]] && continue
+    fi
+    a=$(dig +short +time=2 +tries=1 @1.1.1.1 "$n" A 2>/dev/null | grep -E '^[0-9.]+$' | head -1)
+    if [[ -n $a ]] && ! points_here "$a"; then found+="    $n already points to $a"$'\n'; fi
+  done
+  [[ -z $found ]] && return 0
+  say ""
+  warn "Some of these names are already in use:"
+  printf '%s' "$found"
+  say "    Using them means changing those DNS records. If they're for something else"
+  say "    (a website, say), choose different names."
+  [[ $ASSUME_YES -eq 0 ]] && has_tty || return 0
+  confirm "Use them anyway?" n
+}
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 load_settings() {
@@ -482,68 +687,35 @@ EOF
 
 ask_settings() {
   local id chain net def
-  title "Which seeders?"
-  say "Each seeder needs its own name. One server can run them all."
   local new_enabled=()
+  # --only <chain>: only that chain's networks are offered (and none asked if it has just one); seeders of
+  # other chains already on the server are kept.
+  if [[ -n $ONLY_CHAIN ]]; then
+    for id in "${ENABLED[@]}"; do [[ ${id%%-*} == "$ONLY_CHAIN" ]] || new_enabled+=("$id"); done
+  fi
+  if [[ -z $ONLY_CHAIN || $(wc -w <<<"${CHAIN_NETWORKS[$ONLY_CHAIN]}") -gt 1 ]]; then
+    title "Which seeders?"
+    say "Each seeder needs its own name. One server can run them all."
+  fi
   for chain in "${CHAINS[@]}"; do
+    [[ -z $ONLY_CHAIN || $chain == "$ONLY_CHAIN" ]] || continue
     for net in ${CHAIN_NETWORKS[$chain]}; do
       id="$chain-$net"
+      if [[ -n $ONLY_CHAIN && $(wc -w <<<"${CHAIN_NETWORKS[$chain]}") -eq 1 ]]; then new_enabled+=("$id"); continue; fi
       def=n
       [[ " ${ENABLED[*]} " == *" $id "* ]] && def=y
-      [[ ${#ENABLED[@]} -eq 0 && " $DEFAULT_CHAINS " == *" $chain "* ]] && def=y
+      [[ ${#ENABLED[@]} -eq 0 && ( " $DEFAULT_CHAINS " == *" $chain "* || $chain == "$ONLY_CHAIN" ) ]] && def=y
       if confirm "Run a ${B}${NET_LABEL[$id]}${R} seeder?" "$def"; then new_enabled+=("$id"); fi
     done
   done
   [[ ${#new_enabled[@]} -gt 0 ]] || fail "No seeders chosen."
   ENABLED=("${new_enabled[@]}")
 
-  title "Names"
-  say "You need a domain you control, with access to its DNS records."
-  local domain_guess="" need_domain=0
-  [[ -n $NS_HOST ]] && domain_guess="${NS_HOST#*.}"
-  for id in "${ENABLED[@]}"; do [[ -n ${SEED_HOST[$id]:-} ]] || need_domain=1; done
-  if [[ -z $domain_guess && $need_domain -eq 1 ]]; then
-    ask "Your domain (e.g. example.com)" ""
-    domain_guess="$REPLY"
-  fi
-  for id in "${ENABLED[@]}"; do
-    def="${SEED_HOST[$id]:-${NET_SEED_PREFIX[$id]}.$domain_guess}"
-    while :; do
-      ask "Seed name for ${NET_LABEL[$id]}" "$def"
-      valid_hostname "$REPLY" && break
-      warn "That isn't a valid name."
-    done
-    SEED_HOST[$id]="${REPLY,,}"
-  done
-  say ""
   local chains; chains=$(enabled_chains)
-  if [[ $(wc -l <<<"$chains") -gt 1 ]]; then
-    say "Each chain's seed names are handed to a server name that points at this server."
-    say "Giving each chain its own (e.g. in its own domain) lets you move one chain's"
-    say "seeders to another server later without touching the other's records."
-  else
-    say "The server's name points at this server. The seed names are handed to it."
-  fi
-  local chain first seed_domain label
-  for chain in $chains; do
-    # Default: the name saved before, or seedserver.<the domain of this chain's first seed name>.
-    for id in "${ENABLED[@]}"; do if [[ ${id%%-*} == "$chain" ]]; then first="$id"; break; fi; done
-    seed_domain="${SEED_HOST[$first]#*.}"
-    def="${SERVER_HOST[$chain]:-$SERVER_PREFIX.$seed_domain}"
-    label="Name for this server"
-    [[ $(wc -l <<<"$chains") -gt 1 ]] && label="Server name for the ${CHAIN_NAME[$chain]} seeds"
-    while :; do
-      ask "$label" "$def"
-      if ! valid_hostname "$REPLY"; then warn "That isn't a valid name."; continue; fi
-      local clash=""
-      for id in "${ENABLED[@]}"; do
-        [[ ${REPLY,,} == "${SEED_HOST[$id]}" || ${REPLY,,} == *".${SEED_HOST[$id]}" ]] && clash="${SEED_HOST[$id]}"
-      done
-      [[ -z $clash ]] && break
-      warn "The server name can't be $clash or inside it. Use a different name, e.g. $SERVER_PREFIX.$seed_domain."
-    done
-    SERVER_HOST[$chain]="${REPLY,,}"
-  done
+  # shellcheck disable=SC2086
+  ask_domains $chains
+  suggest_names "${ENABLED[@]}"
+  review_names "${ENABLED[@]}"
   NS_HOST="$(ns_host "$(head -1 <<<"$chains")")"
   while :; do
     ask "Contact email (shown in the seed's DNS records)" "${SOA_EMAIL:-}"
@@ -564,6 +736,7 @@ ask_updates() {
   say "when it installs security updates by itself."
   local def=y; [[ $AUTO_UPDATES == no ]] && def=n
   if confirm "Install security updates automatically?" "$def"; then AUTO_UPDATES=yes; else AUTO_UPDATES=no; AUTO_RESTART=no; return; fi
+  title "Automatic restarts"
   say "Some updates (such as a new Linux kernel) only take effect after a restart."
   say "The seeders start again by themselves, so it's only down for a minute or so."
   def=y; [[ $AUTO_RESTART == no ]] && def=n
@@ -1162,22 +1335,68 @@ check_dns() { # check_dns [quiet]
   return $all
 }
 
+# The nameserver of the zone a name is in (asked once per zone), for checking records without cached answers.
+declare -A ZONE_NS=()
+zone_ns() { # zone_ns <name>: prints a nameserver for the zone the name is in
+  local zone="$1" ns=""
+  while [[ $zone == *.* ]]; do
+    if [[ -n ${ZONE_NS[$zone]:-} ]]; then printf '%s' "${ZONE_NS[$zone]}"; return 0; fi
+    ns=$(dig +short +time=3 +tries=1 @1.1.1.1 "$zone" NS 2>/dev/null | head -1)
+    if [[ -n $ns ]]; then ZONE_NS[$zone]="$ns"; printf '%s' "$ns"; return 0; fi
+    zone="${zone#*.}"
+  done
+  return 0
+}
+
+# Is this record in place? Asked straight from the zone's nameserver (or, for NS, the parent zone's).
+record_ok() { # record_ok <name> <A|AAAA|NS> <value>
+  local name="$1" type="$2" value="${3,,}" ns
+  if [[ $type == NS ]]; then
+    find_delegation "$name"
+    grep -qxF "$value" <<<"$DELEG_NS"
+    return
+  fi
+  ns=$(zone_ns "$(name_domain "$name")")
+  [[ -n $ns ]] || return 1
+  dig +short +norec +time=3 +tries=1 @"$ns" "$name" "$type" 2>/dev/null | tr '[:upper:]' '[:lower:]' | grep -qxF "$value"
+}
+
+# The DNS records to add, one section per domain (one page at most DNS providers), with a tick next to the
+# ones already in place.
 show_dns_records() {
-  title "Add these DNS records"
-  say "At the DNS provider for each domain:"
-  say ""
-  local id host
+  title "DNS records"
+  say "Add the records without a ${GRN}✓${R} at your DNS provider. Each domain's records are"
+  say "together, as they're on the same page there."
+  local id host lines="" domain domains="" line name type value mark missing=0
   while read -r host; do
-    [[ -n $PUBLIC_V4 ]] && printf '  %-34s %-5s %s\n' "$host" "A" "$PUBLIC_V4"
-    [[ -n $LOCAL_V6 ]] && printf '  %-34s %-5s %s\n' "$host" "AAAA" "$LOCAL_V6"
+    [[ -n $host ]] || continue
+    [[ -n $PUBLIC_V4 ]] && lines+="$host A $PUBLIC_V4"$'\n'
+    [[ -n $LOCAL_V6 ]] && lines+="$host AAAA $LOCAL_V6"$'\n'
   done < <(server_hosts)
-  for id in "${ENABLED[@]}"; do
-    printf '  %-34s %-5s %s\n' "${SEED_HOST[$id]}" "NS" "$(ns_host "$id")"
+  for id in "${ENABLED[@]}"; do lines+="${SEED_HOST[$id]} NS $(ns_host "$id")"$'\n'; done
+  # Domains in the order they first appear.
+  while read -r name type value; do
+    [[ -n $name ]] || continue
+    domain=$(name_domain "$name")
+    [[ " $domains " == *" $domain "* ]] || domains+=" $domain"
+  done <<<"$lines"
+  for domain in $domains; do
+    say ""
+    say "  ${B}$domain${R}"
+    while read -r name type value; do
+      [[ -n $name && $(name_domain "$name") == "$domain" ]] || continue
+      if record_ok "$name" "$type" "$value"; then mark="${GRN}✓${R}"; else mark=" "; missing=$((missing + 1)); fi
+      printf '  %b %-32s %-5s %s\n' "$mark" "$name" "$type" "$value"
+    done <<<"$lines"
   done
   say ""
-  say "  - On Cloudflare, set the A and AAAA records to ${B}DNS only${R} (grey cloud)."
-  say "  - Delete any other record (A, CNAME...) for the seed names, or the NS"
-  say "    records won't work."
+  if (( missing == 0 )); then
+    say "  All the records are in place."
+  else
+    say "  - On Cloudflare, set the A and AAAA records to ${B}DNS only${R} (grey cloud)."
+    say "  - Delete any other record (A, CNAME...) for the seed names, or the NS"
+    say "    records won't work."
+  fi
   say "  - Your server provider's firewall must allow ${B}UDP port 53${R} in."
   say ""
   say "Help with DNS records: ${GUIDE_URL}#dns-records"
@@ -1236,93 +1455,49 @@ available_networks() {
   return 0
 }
 
+# The seed name given on the command line for a network: --testnet-name for a testnet, --name otherwise.
+cli_name_for() { # cli_name_for <id>
+  if [[ ${1#*-} == testnet && ( -n $TARGET_CHAIN || -n $CLI_ADD_TESTNET_NAME ) ]]; then printf '%s' "$CLI_ADD_TESTNET_NAME"
+  else printf '%s' "$CLI_ADD_NAME"; fi
+}
+
 # Choose which of the target networks to add (asking, when a whole chain with several was given), then add them.
 add_networks() {
-  local id todo=() pick=()
+  local id todo=() pick=() chain chains="" interactive=0
+  [[ $ASSUME_YES -eq 0 ]] && has_tty && interactive=1
   for id in "${TARGET_IDS[@]}"; do
     if [[ " ${ENABLED[*]} " == *" $id "* ]]; then info "${NET_LABEL[$id]} is already set up (${SEED_HOST[$id]})."
     else todo+=("$id"); fi
   done
   [[ ${#todo[@]} -gt 0 ]] || { ok "Nothing to add."; exit 0; }
-  if [[ -n $TARGET_CHAIN && ${#todo[@]} -gt 1 ]]; then
-    if [[ $ASSUME_YES -eq 0 ]] && has_tty; then
-      title "Adding ${CHAIN_NAME[$TARGET_CHAIN]} seeders"
-      say "Your other seeders and settings stay as they are."
-      for id in "${todo[@]}"; do
-        confirm "Run a ${B}${NET_LABEL[$id]}${R} seeder?" y && pick+=("$id")
-      done
-      [[ ${#pick[@]} -gt 0 ]] || { ok "Nothing added."; exit 0; }
-    else
-      # Without questions: the networks whose seed names were given (--name for mainnet, --testnet-name for testnet).
-      for id in "${todo[@]}"; do [[ -n $(cli_name_for "$id") ]] && pick+=("$id"); done
-      [[ ${#pick[@]} -gt 0 ]] || fail "Give the seed names: --name <mainnet seed> and/or --testnet-name <testnet seed>."
-    fi
+  title "Adding ${CHAIN_NAME[${todo[0]%%-*}]} seeders"
+  say "Your other seeders and settings stay as they are."
+  if [[ -n $TARGET_CHAIN && ${#todo[@]} -gt 1 && $interactive -eq 1 ]]; then
+    for id in "${todo[@]}"; do confirm "Run a ${B}${NET_LABEL[$id]}${R} seeder?" y && pick+=("$id"); done
+    [[ ${#pick[@]} -gt 0 ]] || { ok "Nothing added."; exit 0; }
+  elif [[ -n $TARGET_CHAIN && ${#todo[@]} -gt 1 ]]; then
+    # Without questions: all of them with --domain, otherwise those whose seed names were given.
+    if [[ -n $CLI_ADD_DOMAIN ]]; then pick=("${todo[@]}")
+    else for id in "${todo[@]}"; do [[ -n $(cli_name_for "$id") ]] && pick+=("$id"); done; fi
+    [[ ${#pick[@]} -gt 0 ]] || fail "Give a domain with --domain (e.g. --add ${TARGET_CHAIN} --domain example.com), or the seed names with --name/--testnet-name."
   else
     pick=("${todo[@]}")
-    title "Adding a ${NET_LABEL[${pick[0]}]} seeder"
-    say "Your other seeders and settings stay as they are."
   fi
-  for id in "${pick[@]}"; do add_network "$id"; done
-}
-
-# The seed name given on the command line for a network: --testnet-name for a testnet, --name otherwise (or
-# --name for the one network asked for by name).
-cli_name_for() { # cli_name_for <id>
-  if [[ ${1#*-} == testnet && -n $TARGET_CHAIN ]]; then printf '%s' "$CLI_ADD_TESTNET_NAME"
-  elif [[ ${1#*-} == testnet && -n $CLI_ADD_TESTNET_NAME ]]; then printf '%s' "$CLI_ADD_TESTNET_NAME"
-  else printf '%s' "$CLI_ADD_NAME"; fi
-}
-
-# Adds one network: asks for its seed name (and a server name, if its chain has none yet).
-add_network() { # add_network <id>
-  local id="$1" chain="${1%%-*}" def seed_domain other given
-  # Suggested seed name: the one it had if it was removed before, otherwise <prefix>.<the domain in use>.
-  def=""
-  [[ -r $CONF_DIR/$id.conf.off ]] && def=$(sed -n 's/^SEED_HOST="\(.*\)"$/\1/p' "$CONF_DIR/$id.conf.off")
-  [[ -n $def ]] || def="${NET_SEED_PREFIX[$id]}.$(ns_host "${ENABLED[0]}" | cut -d. -f2-)"
-  given=$(cli_name_for "$id")
-  if [[ -n $given ]]; then
-    REPLY="$given"
-  elif [[ $ASSUME_YES -eq 0 ]] && has_tty; then
-    while :; do
-      ask "Seed name for ${NET_LABEL[$id]}" "$def"
-      valid_hostname "$REPLY" && break
-      warn "That isn't a valid name."
-    done
-  else
-    fail "Give the seed name with --name (e.g. --add $id --name $def)."
-  fi
-  valid_hostname "$REPLY" || fail "Invalid seed name: $REPLY"
-  for other in "${ENABLED[@]}"; do
-    [[ ${REPLY,,} == "${SEED_HOST[$other]}" ]] && fail "${SEED_HOST[$other]} is already used by the ${NET_LABEL[$other]} seeder."
+  # Each chain's domain: the one it already uses, the one given, or asked.
+  for id in "${pick[@]}"; do chain="${id%%-*}"; [[ " $chains " == *" $chain "* ]] || chains+=" $chain"; done
+  for chain in $chains; do
+    if [[ -n ${SERVER_HOST[$chain]:-} ]]; then CHAIN_DOMAIN[$chain]=$(current_domain "$chain")
+    elif [[ -n $CLI_ADD_DOMAIN ]]; then valid_domain "$CLI_ADD_DOMAIN" || fail "Invalid --domain: $CLI_ADD_DOMAIN"; CHAIN_DOMAIN[$chain]="${CLI_ADD_DOMAIN,,}"
+    elif [[ $interactive -eq 1 ]]; then ask_domains "$chain"
+    elif [[ -n $(cli_name_for "${pick[0]}") ]]; then CHAIN_DOMAIN[$chain]=$(name_domain "$(cli_name_for "${pick[0]}")")
+    else fail "Give a domain with --domain (e.g. --add ${pick[0]} --domain example.com)."; fi
   done
-  SEED_HOST[$id]="${REPLY,,}"
-  # Server name: the chain's own if it already has one, otherwise asked (default seedserver.<the seed's domain>).
-  if [[ -z ${SERVER_HOST[$chain]:-} ]]; then
-    seed_domain="${SEED_HOST[$id]#*.}"
-    def="$SERVER_PREFIX.$seed_domain"
-    if [[ -n $CLI_ADD_SERVER ]]; then
-      REPLY="$CLI_ADD_SERVER"
-    elif [[ $ASSUME_YES -eq 0 ]] && has_tty; then
-      say ""
-      say "Its seed name is handed to a server name that points at this server."
-      say "Your other seeds use $NS_HOST."
-      say "A name of its own, such as $def, lets you move the"
-      say "${CHAIN_NAME[$chain]} seeders to another server later without touching the others."
-      while :; do
-        ask "Server name for the ${CHAIN_NAME[$chain]} seeds" "$def"
-        valid_hostname "$REPLY" && break
-        warn "That isn't a valid name."
-      done
-    else
-      REPLY="$def"
-    fi
-    valid_hostname "$REPLY" || fail "Invalid server name: $REPLY"
-    [[ ${REPLY,,} == "${SEED_HOST[$id]}" || ${REPLY,,} == *".${SEED_HOST[$id]}" ]] \
-      && fail "The server name can't be ${SEED_HOST[$id]} or inside it."
-    SERVER_HOST[$chain]="${REPLY,,}"
-  fi
-  ENABLED+=("$id")
+  ENABLED+=("${pick[@]}")
+  suggest_names "${pick[@]}"
+  # Names given on the command line win over the suggestions.
+  for id in "${pick[@]}"; do [[ -n $(cli_name_for "$id") ]] && SEED_HOST[$id]="$(cli_name_for "$id")"; SEED_HOST[$id]="${SEED_HOST[$id],,}"; done
+  if [[ -n $CLI_ADD_SERVER ]]; then for chain in $chains; do SERVER_HOST[$chain]="${CLI_ADD_SERVER,,}"; done; fi
+  review_names "${pick[@]}"
 }
 
 # Removes the target networks from ENABLED (their seeders are stopped when the settings are saved).
@@ -1362,6 +1537,12 @@ do_setup() {
   EXISTING=0; [[ -r $CONF_DIR/settings ]] && EXISTING=1
   if [[ $CLI_SET -eq 0 ]] && load_settings; then
     info "Found an existing setup."
+  fi
+  remember_own_names
+  # --only <chain> on a server already set up without that chain: add it, like --add <chain>.
+  if [[ -n $ONLY_CHAIN && $EXISTING -eq 1 && ${#ENABLED[@]} -gt 0 && $RECONFIGURE -eq 0 && -z $ADD_NET$REMOVE_NET ]] \
+     && ! grep -q "^$ONLY_CHAIN-" < <(printf '%s\n' "${ENABLED[@]}"); then
+    ADD_NET="$ONLY_CHAIN"
   fi
   if [[ -n $ADD_NET || -n $REMOVE_NET ]]; then
     [[ $EXISTING -eq 1 && ${#ENABLED[@]} -gt 0 ]] || fail "DigiNode Seeder isn't set up on this server yet. Set it up first: curl -sSL https://seedsetup.diginode.tools | sudo bash"
@@ -1419,8 +1600,9 @@ do_setup() {
   say "  - See how it's doing, now and then:              ${B}$(cmd_hint)${R}"
   say "  - Update it (keeps your settings):               ${B}$(cmd_hint --update)${R}"
   local cores=""; for c in $(enabled_chains); do cores+="${cores:+ and }${CHAIN_CORE_NAME[$c]}"; done
-  say "  - After a few days, ask for your seeds to be added to $cores,"
-  say "    so nodes start using them. ${B}$(cmd_hint)${R} shows the line to add. How:"
+  say "  - After a few days, ask for your seeds to be added to the node software"
+  say "    ($cores), so nodes start using them."
+  say "    ${B}$(cmd_hint)${R} shows the line to add. How:"
   say "    ${GUIDE_URL}#add-to-digibyte-core"
   [[ -x $CMD_LINK ]] && say "  - All commands:   ${B}diginode-seeder --help${R}"
   if [[ $(sshd -T 2>/dev/null | awk '$1=="passwordauthentication"{print $2}') == yes ]]; then
@@ -1716,9 +1898,13 @@ Set up without questions (e.g. for automation):
   --nito <name>          Nito mainnet seed name (e.g. nitoseed.example.com)
   --ns <name>            Name for this server (e.g. seedserver.example.com)
   --nito-ns <name>       A different server name for the Nito seed (optional)
+  --domain <domain>      With --add: the domain for the new seeds (names are
+                         suggested from it, e.g. seed.<domain>)
   --name <name>          With --add: the (mainnet) seed name
   --testnet-name <name>  With --add <chain>: the testnet seed name
   --server <name>        With --add: the server name for a new chain (optional)
+  --only <chain>         Set up only this chain's seeders; others already on the
+                         server are kept (seedsetup.nito.tools uses --only nito)
   --hostname <name>      Rename this server (default: offered as diginode-seeder
                          when it has a provider's default name); "keep" = don't
   --email <address>      Contact email for the seeds' DNS records
@@ -1766,7 +1952,7 @@ main() {
   ENABLED=(); NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; CLI_MOTD=""
   AUTO_UPDATES=""; AUTO_RESTART=""; CLI_UPDATES=""; CLI_RESTART=""; FIREWALL=""; CLI_FIREWALL=""; EXISTING=0
   RENAME_HOST=""; CLI_HOSTNAME=""; NEW_HOSTNAME=""
-  ADD_NET=""; REMOVE_NET=""; CLI_ADD_NAME=""; CLI_ADD_TESTNET_NAME=""; CLI_ADD_SERVER=""
+  ONLY_CHAIN=""; ADD_NET=""; REMOVE_NET=""; CLI_ADD_NAME=""; CLI_ADD_TESTNET_NAME=""; CLI_ADD_SERVER=""; CLI_ADD_DOMAIN=""
   local cli_main="" cli_test="" cli_nito="" cli_ns="" cli_nito_ns="" cli_email=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1782,6 +1968,10 @@ main() {
       --name) CLI_ADD_NAME="${2:-}"; shift ;;
       --testnet-name) CLI_ADD_TESTNET_NAME="${2:-}"; shift ;;
       --server) CLI_ADD_SERVER="${2:-}"; shift ;;
+      --domain) CLI_ADD_DOMAIN="${2:-}"; shift ;;
+      --only)
+        [[ -n ${CHAIN_NAME[${2:-}]:-} ]] || fail "Unknown chain for --only: ${2:-} (use one of: ${CHAINS[*]})"
+        ONLY_CHAIN="$2"; shift ;;
       --mainnet) cli_main="${2:-}"; shift ;;
       --testnet) cli_test="${2:-}"; shift ;;
       --nito) cli_nito="${2:-}"; shift ;;
