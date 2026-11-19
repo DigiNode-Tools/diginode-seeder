@@ -17,7 +17,7 @@
 set -Eeuo pipefail
 trap 'printf "\n[✗] Stopped unexpectedly at line %s. Please report this: https://github.com/DigiNode-Tools/diginode-seeder-setup/issues\n" "$LINENO" >&2' ERR
 
-DGNS_VERSION="0.3.5"
+DGNS_VERSION="0.3.6"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -604,7 +604,7 @@ check_names_in_use() { # check_names_in_use <id>...
 # Settings
 # ---------------------------------------------------------------------------
 load_settings() {
-  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; AUTO_UPDATES=""; AUTO_RESTART=""; FIREWALL=""; RENAME_HOST=""; ENABLED=()
+  NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; AUTO_UPDATES=""; AUTO_RESTART=""; FIREWALL=""; RENAME_HOST=""; ONLY_CHAINS=""; ENABLED=()
   declare -gA SEED_HOST=() SERVER_HOST=()
   local chain var
   for chain in "${CHAINS[@]}"; do unset "NS_HOST_$chain"; done
@@ -630,6 +630,14 @@ load_settings() {
   return 0
 }
 
+# ONLY_CHAINS as saved: also every chain that has a seeder, so a running chain is never hidden.
+only_chains_to_save() {
+  [[ -n $ONLY_CHAINS ]] || return 0
+  local list="$ONLY_CHAINS" c
+  for c in $(enabled_chains); do [[ " $list " == *" $c "* ]] || list+=" $c"; done
+  printf '%s' "$(xargs <<<"$list")"
+}
+
 write_settings_file() {
   install -d -m 755 "$CONF_DIR"
   cat > "$CONF_DIR/settings" <<EOF
@@ -644,6 +652,9 @@ AUTO_UPDATES="${AUTO_UPDATES:-yes}"
 AUTO_RESTART="${AUTO_RESTART:-yes}"
 FIREWALL="${FIREWALL:-}"
 RENAME_HOST="${RENAME_HOST:-}"
+# The blockchains this server is set up for: one at first (DigiByte, or Nito from seedsetup.nito.tools);
+# diginode-seeder --add <chain> adds another.
+ONLY_CHAINS="$(only_chains_to_save)"
 EOF
 }
 
@@ -655,6 +666,7 @@ keep_saved_extras() {
   [[ -n $AUTO_UPDATES ]] || AUTO_UPDATES=$(sed -n 's/^AUTO_UPDATES="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $AUTO_RESTART ]] || AUTO_RESTART=$(sed -n 's/^AUTO_RESTART="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $FIREWALL ]] || FIREWALL=$(sed -n 's/^FIREWALL="\(.*\)"$/\1/p' "$CONF_DIR/settings")
+  [[ -n $ONLY_CHAINS ]] || ONLY_CHAINS=$(sed -n 's/^ONLY_CHAINS="\(.*\)"$/\1/p' "$CONF_DIR/settings")
   [[ -n $RENAME_HOST ]] || RENAME_HOST=$(sed -n 's/^RENAME_HOST="\(.*\)"$/\1/p' "$CONF_DIR/settings")
 }
 
@@ -688,23 +700,33 @@ EOF
 ask_settings() {
   local id chain net def
   local new_enabled=()
-  # --only <chain>: only that chain's networks are offered (and none asked if it has just one); seeders of
-  # other chains already on the server are kept.
-  if [[ -n $ONLY_CHAIN ]]; then
-    for id in "${ENABLED[@]}"; do [[ ${id%%-*} == "$ONLY_CHAIN" ]] || new_enabled+=("$id"); done
+  # A server set up for certain chains (ONLY_CHAINS, from --only or a later --add) is only asked about those;
+  # seeders of other chains already on it are kept. No question at all if they have just one network.
+  local offered="" n=0
+  for chain in "${CHAINS[@]}"; do
+    [[ -z $ONLY_CHAINS || " $ONLY_CHAINS " == *" $chain "* ]] || continue
+    offered+=" $chain"; n=$((n + $(wc -w <<<"${CHAIN_NETWORKS[$chain]}")))
+  done
+  if [[ -n $ONLY_CHAINS ]]; then
+    for id in "${ENABLED[@]}"; do [[ " $offered " == *" ${id%%-*} "* ]] || new_enabled+=("$id"); done
   fi
-  if [[ -z $ONLY_CHAIN || $(wc -w <<<"${CHAIN_NETWORKS[$ONLY_CHAIN]}") -gt 1 ]]; then
+  if [[ -z $ONLY_CHAINS || $n -gt 1 ]]; then
     title "Which seeders?"
     say "Each seeder needs its own name. One server can run them all."
   fi
-  for chain in "${CHAINS[@]}"; do
-    [[ -z $ONLY_CHAIN || $chain == "$ONLY_CHAIN" ]] || continue
+  local others="" c
+  for c in "${CHAINS[@]}"; do [[ " $offered " == *" $c "* ]] || others+="${others:+, }${CHAIN_NAME[$c]}"; done
+  if [[ -n $others ]]; then
+    say "${DIM}Seeders for other blockchains ($others) can be added later,"
+    say "e.g. with: diginode-seeder --add ${CHAINS[1]}${R}"
+  fi
+  for chain in $offered; do
     for net in ${CHAIN_NETWORKS[$chain]}; do
       id="$chain-$net"
-      if [[ -n $ONLY_CHAIN && $(wc -w <<<"${CHAIN_NETWORKS[$chain]}") -eq 1 ]]; then new_enabled+=("$id"); continue; fi
+      if [[ -n $ONLY_CHAINS && $n -eq 1 ]]; then new_enabled+=("$id"); continue; fi
       def=n
       [[ " ${ENABLED[*]} " == *" $id "* ]] && def=y
-      [[ ${#ENABLED[@]} -eq 0 && ( " $DEFAULT_CHAINS " == *" $chain "* || $chain == "$ONLY_CHAIN" ) ]] && def=y
+      [[ ${#ENABLED[@]} -eq 0 && ( " $DEFAULT_CHAINS " == *" $chain "* || -n $ONLY_CHAINS ) ]] && def=y
       if confirm "Run a ${B}${NET_LABEL[$id]}${R} seeder?" "$def"; then new_enabled+=("$id"); fi
     done
   done
@@ -1493,6 +1515,8 @@ add_networks() {
     else fail "Give a domain with --domain (e.g. --add ${pick[0]} --domain example.com)."; fi
   done
   ENABLED+=("${pick[@]}")
+  # A server limited to certain chains now includes this one too.
+  if [[ -n $ONLY_CHAINS ]]; then for chain in $chains; do [[ " $ONLY_CHAINS " == *" $chain "* ]] || ONLY_CHAINS+=" $chain"; done; fi
   suggest_names "${pick[@]}"
   # Names given on the command line win over the suggestions.
   for id in "${pick[@]}"; do [[ -n $(cli_name_for "$id") ]] && SEED_HOST[$id]="$(cli_name_for "$id")"; SEED_HOST[$id]="${SEED_HOST[$id],,}"; done
@@ -1513,6 +1537,7 @@ remove_networks() {
   say "Their crawl data is kept, so adding them again later starts where they left off."
   say "Remember to delete their NS records at your DNS provider."
   ENABLED=("${keep[@]}")
+  if [[ -n $TARGET_CHAIN ]]; then ONLY_CHAINS=$(xargs -n1 <<<"$ONLY_CHAINS" | grep -vx "$TARGET_CHAIN" | xargs); fi
 }
 
 # For the status: the command that adds a network (the chain's name alone when it's the chain's only one).
@@ -1539,10 +1564,21 @@ do_setup() {
     info "Found an existing setup."
   fi
   remember_own_names
+  # Every server is set up for its own blockchains (ONLY_CHAINS): one by default (DigiByte, or the one given with
+  # --only, as seedsetup.nito.tools does), more with --add <chain>. Setups from before 0.3.6: the chains they run.
+  if [[ $EXISTING -eq 0 || ${#ENABLED[@]} -eq 0 ]]; then
+    if [[ $CLI_SET -eq 1 ]]; then ONLY_CHAINS=$(enabled_chains | xargs)
+    else ONLY_CHAINS="${CLI_ONLY:-$DEFAULT_CHAINS}"; fi
+  elif [[ -z $ONLY_CHAINS ]]; then
+    ONLY_CHAINS=$(enabled_chains | xargs)
+  fi
   # --only <chain> on a server already set up without that chain: add it, like --add <chain>.
-  if [[ -n $ONLY_CHAIN && $EXISTING -eq 1 && ${#ENABLED[@]} -gt 0 && $RECONFIGURE -eq 0 && -z $ADD_NET$REMOVE_NET ]] \
-     && ! grep -q "^$ONLY_CHAIN-" < <(printf '%s\n' "${ENABLED[@]}"); then
-    ADD_NET="$ONLY_CHAIN"
+  if [[ -n $CLI_ONLY ]]; then
+    if [[ $EXISTING -eq 0 || ${#ENABLED[@]} -eq 0 ]]; then
+      :
+    elif [[ $RECONFIGURE -eq 0 && -z $ADD_NET$REMOVE_NET ]] && ! grep -q "^$CLI_ONLY-" < <(printf '%s\n' "${ENABLED[@]}"); then
+      ADD_NET="$CLI_ONLY"
+    fi
   fi
   if [[ -n $ADD_NET || -n $REMOVE_NET ]]; then
     [[ $EXISTING -eq 1 && ${#ENABLED[@]} -gt 0 ]] || fail "DigiNode Seeder isn't set up on this server yet. Set it up first: curl -sSL https://seedsetup.diginode.tools | sudo bash"
@@ -1638,6 +1674,7 @@ do_status() {
   # What else can be added: a whole chain as one line (with its command), otherwise each network.
   local avail missing net; avail=$(available_networks)
   for chain in "${CHAINS[@]}"; do
+    [[ -z $ONLY_CHAINS || " $ONLY_CHAINS " == *" $chain "* ]] || continue
     missing=0
     for net in ${CHAIN_NETWORKS[$chain]}; do grep -qx "$chain-$net" <<<"$avail" && missing=$((missing + 1)); done
     (( missing > 0 )) || continue
@@ -1869,7 +1906,12 @@ do_uninstall() {
 
 usage() {
   cat <<EOF
-DigiNode Seeder $DGNS_VERSION - DNS seeders for DigiByte and Nito, on your own server.
+DigiNode Seeder $DGNS_VERSION - DNS seeders for DigiByte, Nito and Litecoin, on your own server.
+
+A server is set up for one blockchain (mainnet and/or testnet): DigiByte from
+seedsetup.diginode.tools, Nito from seedsetup.nito.tools. To run seeders for
+another blockchain on the same server too, add them with --add (e.g.
+diginode-seeder --add litecoin).
 
 Usage: diginode-seeder [option]
 
@@ -1903,8 +1945,8 @@ Set up without questions (e.g. for automation):
   --name <name>          With --add: the (mainnet) seed name
   --testnet-name <name>  With --add <chain>: the testnet seed name
   --server <name>        With --add: the server name for a new chain (optional)
-  --only <chain>         Set up only this chain's seeders; others already on the
-                         server are kept (seedsetup.nito.tools uses --only nito)
+  --only <chain>         Set up this blockchain instead of DigiByte
+                         (seedsetup.nito.tools uses --only nito)
   --hostname <name>      Rename this server (default: offered as diginode-seeder
                          when it has a provider's default name); "keep" = don't
   --email <address>      Contact email for the seeds' DNS records
@@ -1952,7 +1994,7 @@ main() {
   ENABLED=(); NS_HOST=""; SOA_EMAIL=""; SETUP_DATE=""; MOTD=""; CLI_MOTD=""
   AUTO_UPDATES=""; AUTO_RESTART=""; CLI_UPDATES=""; CLI_RESTART=""; FIREWALL=""; CLI_FIREWALL=""; EXISTING=0
   RENAME_HOST=""; CLI_HOSTNAME=""; NEW_HOSTNAME=""
-  ONLY_CHAIN=""; ADD_NET=""; REMOVE_NET=""; CLI_ADD_NAME=""; CLI_ADD_TESTNET_NAME=""; CLI_ADD_SERVER=""; CLI_ADD_DOMAIN=""
+  CLI_ONLY=""; ONLY_CHAINS=""; ADD_NET=""; REMOVE_NET=""; CLI_ADD_NAME=""; CLI_ADD_TESTNET_NAME=""; CLI_ADD_SERVER=""; CLI_ADD_DOMAIN=""
   local cli_main="" cli_test="" cli_nito="" cli_ns="" cli_nito_ns="" cli_email=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1971,7 +2013,7 @@ main() {
       --domain) CLI_ADD_DOMAIN="${2:-}"; shift ;;
       --only)
         [[ -n ${CHAIN_NAME[${2:-}]:-} ]] || fail "Unknown chain for --only: ${2:-} (use one of: ${CHAINS[*]})"
-        ONLY_CHAIN="$2"; shift ;;
+        CLI_ONLY="$2"; shift ;;
       --mainnet) cli_main="${2:-}"; shift ;;
       --testnet) cli_test="${2:-}"; shift ;;
       --nito) cli_nito="${2:-}"; shift ;;

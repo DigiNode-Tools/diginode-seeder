@@ -28,11 +28,13 @@ Log in to your server with SSH and run:
 curl -sSL https://seedsetup.diginode.tools | sudo bash
 ```
 
-To set up only Nito seeders (no DigiByte or Litecoin questions), use:
+For Nito seeders, use:
 
 ```bash
 curl -sSL https://seedsetup.nito.tools | sudo bash
 ```
+
+Each link sets up one blockchain: DigiByte (mainnet and/or testnet) from `seedsetup.diginode.tools`, Nito from `seedsetup.nito.tools`. The server remembers it, so later changes only ask about that blockchain. To run seeders for another blockchain on the same server too, add them with `diginode-seeder --add <chain>` (e.g. `--add litecoin`).
 
 It asks which seeders to run, then **the domain for each blockchain's seeds**, and suggests every name from it:
 
